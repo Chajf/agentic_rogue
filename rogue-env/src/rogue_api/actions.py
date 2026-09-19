@@ -1,3 +1,5 @@
+"""Translate API actions into prompt-aware Rogue input segments."""
+
 from dataclasses import dataclass
 
 from .models import (

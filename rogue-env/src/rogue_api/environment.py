@@ -1,3 +1,5 @@
+"""Episode lifecycle and action orchestration."""
+
 import asyncio
 from pathlib import Path
 import secrets

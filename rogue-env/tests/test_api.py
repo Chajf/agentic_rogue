@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from rogue_env.api import app
+from rogue_api.api import app
 
 
 def test_health_without_game() -> None:

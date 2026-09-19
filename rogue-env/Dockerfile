@@ -22,12 +22,11 @@ RUN apt-get update \
 COPY --from=rogue-builder /src/rogue/rogue /usr/local/bin/rogue
 WORKDIR /app
 COPY pyproject.toml ./
-COPY rogue_env ./rogue_env
+COPY src ./src
 RUN pip install --no-cache-dir .
 
 USER rogue
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health')); raise SystemExit(data['status'] != 'healthy')"
-CMD ["uvicorn", "rogue_env.api:app", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["uvicorn", "rogue_api.api:app", "--host", "0.0.0.0", "--port", "8000"]

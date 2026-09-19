@@ -1,7 +1,7 @@
 import pytest
 
-from rogue_env.actions import InvalidAction, encode_action
-from rogue_env.models import Direction, InteractionMode, KeyActionRequest, SemanticAction, SemanticActionRequest
+from rogue_api.actions import InvalidAction, encode_action
+from rogue_api.models import Direction, InteractionMode, KeyActionRequest, SemanticAction, SemanticActionRequest
 
 
 def semantic(action: SemanticAction, **kwargs: object) -> SemanticActionRequest:

@@ -1,3 +1,5 @@
+"""FastAPI application for the Rogue environment."""
+
 from contextlib import asynccontextmanager
 from typing import Annotated
 

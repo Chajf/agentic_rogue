@@ -1,3 +1,5 @@
+"""Low-level Rogue subprocess and PTY transport."""
+
 import asyncio
 import errno
 import fcntl

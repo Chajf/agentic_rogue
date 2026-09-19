@@ -1,5 +1,5 @@
-from rogue_env.models import InteractionMode
-from rogue_env.terminal import TerminalObserver
+from rogue_api.models import InteractionMode
+from rogue_api.terminal import TerminalObserver
 
 
 def test_parses_status_line() -> None:

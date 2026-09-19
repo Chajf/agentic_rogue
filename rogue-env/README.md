@@ -10,6 +10,8 @@ with `pyte`, and exposes semantic or raw-key actions through FastAPI.
 docker compose up --build
 ```
 
+Run this command from the repository root, where the shared Compose file lives.
+
 OpenAPI documentation is available at <http://localhost:8000/docs>. Rogue save,
 score, and lock files live in the `rogue-data` named volume. A reset always starts
 a fresh episode and preserves only the score file.
@@ -37,12 +39,11 @@ Other endpoints are `GET /game/state`, `DELETE /game`, and `GET /health`.
 ## Test
 
 ```bash
-uv run --extra test pytest
+uv run --all-packages --group test pytest
 ```
 
 To include the native integration test, point it at a compiled Rogue binary:
 
 ```bash
-TEST_ROGUE_BINARY=/absolute/path/to/rogue uv run --extra test pytest
+TEST_ROGUE_BINARY=/absolute/path/to/rogue uv run --all-packages --group test pytest
 ```
-

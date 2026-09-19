@@ -4,9 +4,9 @@ import tempfile
 
 import pytest
 
-from rogue_env.config import Settings
-from rogue_env.environment import RogueEnv
-from rogue_env.models import SemanticAction, SemanticActionRequest
+from rogue_api.config import Settings
+from rogue_api.environment import RogueEnv
+from rogue_api.models import SemanticAction, SemanticActionRequest
 
 
 ROGUE_BINARY = os.environ.get("TEST_ROGUE_BINARY")

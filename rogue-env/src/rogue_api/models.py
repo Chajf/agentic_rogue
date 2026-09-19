@@ -1,3 +1,5 @@
+"""Public API request and response models."""
+
 from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID

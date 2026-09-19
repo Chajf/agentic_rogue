@@ -1,3 +1,5 @@
+"""Launch a neighboring Rogue build and send one movement key."""
+
 import os
 import pty
 import select

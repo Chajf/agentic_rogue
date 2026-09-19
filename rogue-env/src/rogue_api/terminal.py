@@ -1,3 +1,5 @@
+"""Terminal reconstruction and observation parsing."""
+
 import re
 
 import pyte
