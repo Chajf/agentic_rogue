@@ -40,6 +40,7 @@ class RogueEnv:
         self.seed: int | None = None
         self.api_step = 0
         self.error: str | None = None
+        self.messages: list[str] = []
         self._lock = asyncio.Lock()
 
     @property
@@ -58,6 +59,7 @@ class RogueEnv:
             self.episode_id = uuid4()
             self.api_step = 0
             self.error = None
+            self.messages = []
             self.terminal = TerminalObserver(
                 self.settings.terminal_columns,
                 self.settings.terminal_rows,
@@ -66,7 +68,11 @@ class RogueEnv:
             try:
                 output = await self.process.start(self.seed)
                 self.terminal.feed(output)
-                output = await self._consume_more(output)
+                output, page_messages = await self._consume_more(output)
+                final_message = self.terminal.message()
+                if final_message:
+                    page_messages.append(final_message)
+                self.messages = self._deduplicate_adjacent(page_messages)
                 return self._observation(output)
             except Exception as exc:
                 self.error = str(exc)
@@ -92,6 +98,8 @@ class RogueEnv:
             self.api_step += 1
             try:
                 chunks: list[bytes] = []
+                page_messages: list[str] = []
+                message_before = self.terminal.message()
                 for segment in encoded.segments:
                     if (
                         segment.required_mode is not None
@@ -100,11 +108,17 @@ class RogueEnv:
                         break
                     output = await self.process.exchange(segment.data)
                     self.terminal.feed(output)
-                    chunks.append(await self._consume_more(output))
+                    consumed, consumed_messages = await self._consume_more(output)
+                    chunks.append(consumed)
+                    page_messages.extend(consumed_messages)
                 output = b"".join(chunks)
             except (RogueProcessError, TimeoutError) as exc:
                 self.error = str(exc)
                 return self._observation(b"", forced_status=GameStatus.ERROR)
+            final_message = self.terminal.message()
+            if final_message and (final_message != message_before or page_messages):
+                page_messages.append(final_message)
+            self.messages = self._deduplicate_adjacent(page_messages)
             return self._observation(output)
 
     async def close(self) -> None:
@@ -120,14 +134,19 @@ class RogueEnv:
         self.seed = None
         self.api_step = 0
         self.error = None
+        self.messages = []
 
-    async def _consume_more(self, initial: bytes) -> bytes:
+    async def _consume_more(self, initial: bytes) -> tuple[bytes, list[str]]:
         assert self.process is not None
         assert self.terminal is not None
         chunks = [initial]
+        messages: list[str] = []
         for _ in range(100):
             if self.terminal.mode() is not InteractionMode.MORE:
-                return b"".join(chunks)
+                return b"".join(chunks), messages
+            message = self.terminal.message().removesuffix(" --More--").rstrip()
+            if message:
+                messages.append(message)
             output = await self.process.exchange(b" ")
             chunks.append(output)
             self.terminal.feed(output)
@@ -164,7 +183,7 @@ class RogueEnv:
                 }
                 else self.terminal.mode()
             ),
-            message=self.terminal.message(),
+            messages=self.messages,
             screen=self.terminal.display(),
             cursor=self.terminal.cursor(),
             state=self.terminal.state(),
@@ -172,6 +191,14 @@ class RogueEnv:
             terminated=status in {GameStatus.DEAD, GameStatus.WON, GameStatus.QUIT, GameStatus.ERROR},
             error=self.error,
         )
+
+    @staticmethod
+    def _deduplicate_adjacent(messages: list[str]) -> list[str]:
+        result: list[str] = []
+        for message in messages:
+            if not result or result[-1] != message:
+                result.append(message)
+        return result
 
     def _require_episode(self) -> None:
         if self.episode_id is None or self.terminal is None:

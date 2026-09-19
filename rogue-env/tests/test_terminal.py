@@ -39,3 +39,17 @@ def test_screen_is_fixed_size() -> None:
 
     assert len(terminal.display()) == 24
     assert all(len(row) == 80 for row in terminal.display())
+
+
+def test_expands_linux_ncurses_repeat_character_sequence() -> None:
+    terminal = TerminalObserver()
+    terminal.feed(
+        b"\x1b[10;40H-----+------"
+        b"\x1b[11;40H+..*.\x1b[6b+"
+        b"\x1b[12;40H|.\x1b[9b|"
+        b"\x1b[13;40H|.\x1b[7b@H|"
+    )
+
+    assert terminal.display()[10][39:51] == "+..*.......+"
+    assert terminal.display()[11][39:51] == "|..........|"
+    assert terminal.display()[12][39:51] == "|........@H|"

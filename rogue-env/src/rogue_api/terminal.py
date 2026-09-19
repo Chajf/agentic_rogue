@@ -17,12 +17,27 @@ STATUS_RE = re.compile(
 )
 
 
+class RogueScreen(pyte.Screen):
+    def repeat_character(self, count: int | None = None, **_: object) -> None:
+        """Handle ECMA-48 REP, emitted by Linux ncurses as ``CSI Ps b``."""
+        count = count or 1
+        if self.cursor.x == 0:
+            return
+        previous = self.buffer[self.cursor.y][self.cursor.x - 1].data
+        self.draw(previous * count)
+
+
+class RogueStream(pyte.Stream):
+    csi = {**pyte.Stream.csi, "b": "repeat_character"}
+    events = pyte.Stream.events | {"repeat_character"}
+
+
 class TerminalObserver:
     def __init__(self, columns: int = 80, rows: int = 24) -> None:
         self.columns = columns
         self.rows = rows
-        self.screen = pyte.Screen(columns, rows)
-        self.stream = pyte.Stream(self.screen)
+        self.screen = RogueScreen(columns, rows)
+        self.stream = RogueStream(self.screen)
 
     def feed(self, output: bytes) -> None:
         self.stream.feed(output.decode("utf-8", errors="replace"))

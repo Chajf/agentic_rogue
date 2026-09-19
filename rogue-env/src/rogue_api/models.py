@@ -137,7 +137,7 @@ class Observation(BaseModel):
     api_step: int
     status: GameStatus
     mode: InteractionMode
-    message: str
+    messages: list[str]
     screen: list[str]
     cursor: Cursor
     state: RogueState

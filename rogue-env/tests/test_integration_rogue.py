@@ -58,3 +58,32 @@ async def test_seeded_native_episode() -> None:
             assert resumed.api_step == 3
         finally:
             await environment.close()
+
+
+@pytest.mark.skipif(not ROGUE_BINARY, reason="TEST_ROGUE_BINARY is not set")
+async def test_collects_messages_across_more_prompt() -> None:
+    with tempfile.TemporaryDirectory(prefix="rogue-", dir="/tmp") as data_dir:
+        environment = RogueEnv(
+            Settings(
+                rogue_binary=Path(ROGUE_BINARY),
+                data_dir=Path(data_dir),
+                quiet_window_seconds=0.05,
+                action_timeout_seconds=3.0,
+            )
+        )
+        try:
+            initial = await environment.reset(412399380)
+            combat = await environment.step(
+                initial.episode_id,
+                SemanticActionRequest(
+                    type="semantic",
+                    action=SemanticAction.MOVE_RIGHT,
+                ),
+            )
+
+            assert len(combat.messages) == 2
+            assert "hobgoblin" in combat.messages[0].lower()
+            assert "hobgoblin" in combat.messages[1].lower()
+            assert "--More--" not in combat.messages[0]
+        finally:
+            await environment.close()
