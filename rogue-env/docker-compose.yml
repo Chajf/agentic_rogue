@@ -1,0 +1,21 @@
+services:
+  rogue-api:
+    build:
+      context: .
+      args:
+        ROGUE_COMMIT: 631bdd551cee75e0afc340a71dd5a207a3006204
+    ports:
+      - "8000:8000"
+    volumes:
+      - rogue-data:/var/lib/rogue
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
+    mem_limit: 256m
+    cpus: 1.0
+    restart: unless-stopped
+
+volumes:
+  rogue-data:
+
