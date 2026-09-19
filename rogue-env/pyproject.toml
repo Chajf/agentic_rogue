@@ -1,0 +1,19 @@
+[project]
+name = "rogue-env"
+version = "0.1.0"
+description = "PTY-backed HTTP environment for Rogue 5.4"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic-settings>=2.6,<3",
+    "pyte>=0.8.2,<1",
+    "uvicorn[standard]>=0.32,<1",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["rogue_api*"]

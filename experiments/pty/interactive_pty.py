@@ -1,3 +1,5 @@
+"""Manually play a neighboring Rogue build through a Python-owned PTY."""
+
 import os
 import pty
 import select

@@ -1,0 +1,59 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  ROGUE_COMMIT: 631bdd551cee75e0afc340a71dd5a207a3006204
+
+jobs:
+  test:
+    name: Python 3.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: latest-known
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install Rogue build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential libncurses-dev
+
+      - name: Build Rogue 5.4
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/rogue5.4" "${RUNNER_TEMP}/rogue-data"
+          git -C "${RUNNER_TEMP}/rogue5.4" init
+          git -C "${RUNNER_TEMP}/rogue5.4" remote add origin https://github.com/lcn2/rogue5.4.git
+          git -C "${RUNNER_TEMP}/rogue5.4" fetch --depth 1 origin "${ROGUE_COMMIT}"
+          git -C "${RUNNER_TEMP}/rogue5.4" checkout --detach FETCH_HEAD
+          test "$(git -C "${RUNNER_TEMP}/rogue5.4" rev-parse HEAD)" = "${ROGUE_COMMIT}"
+          make -C "${RUNNER_TEMP}/rogue5.4" clobber all ROGUEDIR="${RUNNER_TEMP}/rogue-data"
+
+      - name: Install project dependencies
+        run: uv sync --locked --all-packages --group test
+
+      - name: Run tests
+        env:
+          TEST_ROGUE_BINARY: ${{ runner.temp }}/rogue5.4/rogue
+        run: uv run --locked --all-packages --group test pytest -q
