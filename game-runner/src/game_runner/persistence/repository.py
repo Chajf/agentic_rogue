@@ -2,12 +2,21 @@
 
 from uuid import UUID
 
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .database import connect
 
 
 class GameRepository:
+    def interrupt_open_sessions(self) -> None:
+        with connect() as connection:
+            connection.execute(
+                "UPDATE game_sessions SET status = 'interrupted', ended_at = now(), "
+                "error = 'runner restarted before session completion' "
+                "WHERE status IN ('starting', 'running')"
+            )
+
     def create_session(self, session_id: UUID, model_name: str, prompt_version: str) -> None:
         with connect() as connection:
             connection.execute(
@@ -92,3 +101,17 @@ class GameRepository:
                     error, event_id,
                 ),
             )
+
+    def recent_actions(self, session_id: UUID, limit: int = 100) -> list[dict]:
+        with connect() as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    "SELECT event.action_request, event.observation, call.decision_rationale "
+                    "FROM game_events AS event "
+                    "LEFT JOIN model_calls AS call ON call.id = event.model_call_id "
+                    "WHERE event.session_id = %s AND event.kind = 'action' "
+                    "AND event.observation IS NOT NULL "
+                    "ORDER BY event.id DESC LIMIT %s",
+                    (session_id, limit),
+                )
+                return list(reversed(cursor.fetchall()))

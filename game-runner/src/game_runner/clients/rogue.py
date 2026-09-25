@@ -77,6 +77,20 @@ class ActionRequest(BaseModel):
         return self
 
 
+class KeyActionRequest(BaseModel):
+    type: Literal["key"] = "key"
+    key: str
+
+    @field_validator("key")
+    @classmethod
+    def valid_key(cls, value: str) -> str:
+        if value.upper() in {"ESCAPE", "ENTER", "SPACE"}:
+            return value
+        if len(value) != 1 or not value.isascii() or not value.isprintable() or value == "!":
+            raise ValueError("key must be one safe printable ASCII character or a named key")
+        return value
+
+
 class RogueState(BaseModel):
     dungeon_level: int | None = None
     gold: int | None = None
@@ -142,7 +156,7 @@ class RogueClient:
     async def observe(self) -> Observation:
         return await self._request("GET", "/game/state")
 
-    async def action(self, episode_id: UUID, action: ActionRequest) -> Observation:
+    async def action(self, episode_id: UUID, action: ActionRequest | KeyActionRequest) -> Observation:
         return await self._request(
             "POST", "/game/action",
             json={"episode_id": str(episode_id), **action.model_dump(mode="json", exclude_none=True)},

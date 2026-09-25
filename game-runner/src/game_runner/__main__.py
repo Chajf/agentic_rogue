@@ -1,3 +1,7 @@
-"""Temporary entry point until the session loop is implemented."""
+"""Container entry point for a single Rogue game session."""
 
-print("Game runner container is ready; session execution is not implemented yet.")
+from .session import main
+
+
+if __name__ == "__main__":
+    main()
