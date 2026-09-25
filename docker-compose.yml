@@ -16,5 +16,51 @@ services:
     cpus: 1.0
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  game-runner:
+    build:
+      context: .
+      dockerfile: game-runner/Dockerfile
+    environment:
+      ROGUE_API_URL: http://rogue-api:8000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:?Set MODEL_BASE_URL in .env}
+      MODEL_NAME: ${MODEL_NAME:?Set MODEL_NAME in .env}
+      MODEL_API_KEY: ${MODEL_API_KEY:-local}
+      GAME_SEED: ${GAME_SEED:-}
+      MAX_GAME_ACTIONS: ${MAX_GAME_ACTIONS:-10000}
+      MAX_MODEL_CALLS_PER_ACTION: ${MAX_MODEL_CALLS_PER_ACTION:-3}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-120}
+      ROGUE_TIMEOUT_SECONDS: ${ROGUE_TIMEOUT_SECONDS:-10}
+      CONTEXT_TOKEN_BUDGET: ${CONTEXT_TOKEN_BUDGET:-8192}
+      MIGRATIONS_DIR: /app/postgres/migrations
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rogue-api:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   rogue-data:
+  postgres-data:

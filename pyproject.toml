@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["rogue-env"]
+members = ["rogue-env", "game-runner"]
 
 [dependency-groups]
 test = [
@@ -16,4 +16,4 @@ test = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["rogue-env/tests"]
+testpaths = ["rogue-env/tests", "game-runner/tests"]
