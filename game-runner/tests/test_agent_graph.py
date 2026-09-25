@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from game_runner.clients.rogue import Observation, RogueTransportError
+from game_runner.clients.rogue import Observation, RogueAPIError, RogueTransportError
 from game_runner.context.messages import build_messages
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import Decision, DecisionValidationError, SessionInterrupted, validate_mode
@@ -70,15 +70,18 @@ class FakeRepository:
 
 
 class FakeClient:
-    def __init__(self, response, *, timeout=False):
+    def __init__(self, response, *, timeout=False, api_error=None):
         self.response = response
         self.timeout = timeout
+        self.api_error = api_error
         self.actions = []
 
     async def action(self, episode_id, action):
         self.actions.append((episode_id, action))
         if self.timeout:
             raise RogueTransportError("timeout")
+        if self.api_error is not None:
+            raise self.api_error
         return self.response
 
     async def observe(self):
@@ -150,6 +153,45 @@ async def test_timeout_with_unchanged_step_interrupts_without_retry() -> None:
         })
     assert len(client.actions) == 1
     assert repository.events[0]["outcome"] == "uncertain"
+
+
+@pytest.mark.asyncio
+async def test_timeout_with_advanced_step_recovers_without_retry() -> None:
+    episode_id = uuid4()
+    repository = FakeRepository()
+    client = FakeClient(observed(episode_id, 1), timeout=True)
+    model = FakeModel(json.dumps({
+        "action": {"type": "semantic", "action": "REST"}, "rationale": "Wait.",
+    }))
+    graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
+
+    result = await graph.ainvoke({
+        "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
+    })
+    assert result["next_observation"].api_step == 1
+    assert len(client.actions) == 1
+    assert repository.events[0]["outcome"] == "uncertain"
+    assert repository.events[0]["observation"]["raw_output"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [409, 422])
+async def test_rejected_game_action_is_logged_and_not_retried(status_code) -> None:
+    episode_id = uuid4()
+    repository = FakeRepository()
+    client = FakeClient(observed(episode_id, 0), api_error=RogueAPIError(status_code, "rejected"))
+    model = FakeModel(json.dumps({
+        "action": {"type": "semantic", "action": "REST"}, "rationale": "Wait.",
+    }))
+    graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
+
+    with pytest.raises(RogueAPIError):
+        await graph.ainvoke({
+            "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
+        })
+    assert len(client.actions) == 1
+    assert repository.events[0]["outcome"] == "failed"
+    assert repository.events[0]["http_status"] == status_code
 
 
 def test_history_omits_previous_screen_and_preserves_current_screen() -> None:
