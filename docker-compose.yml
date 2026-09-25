@@ -33,7 +33,8 @@ services:
 
   game-runner:
     build:
-      context: ./game-runner
+      context: .
+      dockerfile: game-runner/Dockerfile
     environment:
       ROGUE_API_URL: http://rogue-api:8000
       POSTGRES_HOST: postgres
@@ -50,6 +51,7 @@ services:
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-120}
       ROGUE_TIMEOUT_SECONDS: ${ROGUE_TIMEOUT_SECONDS:-10}
       CONTEXT_TOKEN_BUDGET: ${CONTEXT_TOKEN_BUDGET:-8192}
+      MIGRATIONS_DIR: /app/postgres/migrations
     extra_hosts:
       - host.docker.internal:host-gateway
     depends_on:

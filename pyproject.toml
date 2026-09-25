@@ -16,4 +16,4 @@ test = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["rogue-env/tests"]
+testpaths = ["rogue-env/tests", "game-runner/tests"]
