@@ -16,14 +16,18 @@ from game_runner.prompts.system import PROMPT_VERSION
 
 async def run_session(settings: Settings, repository: GameRepository, model=None) -> str:
     if model is None:
+        model_kwargs = {
+            "model_provider": "openai",
+            "base_url": settings.model_base_url,
+            "api_key": settings.model_api_key,
+            "timeout": settings.model_timeout_seconds,
+            "max_retries": 0,
+            "temperature": 0,
+            **settings.model_kwargs,
+        }
         model = init_chat_model(
             settings.model_name,
-            model_provider="openai",
-            base_url=settings.model_base_url,
-            api_key=settings.model_api_key,
-            timeout=settings.model_timeout_seconds,
-            max_retries=0,
-            temperature=0,
+            **model_kwargs,
         )
 
     repository.interrupt_open_sessions()

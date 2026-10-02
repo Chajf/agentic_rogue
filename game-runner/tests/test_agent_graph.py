@@ -219,7 +219,8 @@ def test_selection_mode_accepts_only_matching_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runner_stops_after_terminal_observation(monkeypatch) -> None:
+@pytest.mark.parametrize("initialize_model", [False, True])
+async def test_runner_stops_after_terminal_observation(monkeypatch, initialize_model) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
     client = FakeClient(observed(episode_id, 1, status="dead", mode="game_over"))
@@ -233,9 +234,23 @@ async def test_runner_stops_after_terminal_observation(monkeypatch) -> None:
         model_base_url="http://localhost:8080/v1", model_name="test-model", model_api_key="local",
         model_timeout_seconds=120, game_seed=123, max_game_actions=10,
         max_model_calls_per_action=1, context_token_budget=8192,
+        model_kwargs={"temperature": 0.7, "extra_body": {"top_k": 40}},
     )
 
-    status = await run_session(settings, repository, model)
+    initialized = []
+
+    def initialize(name, **kwargs):
+        initialized.append((name, kwargs))
+        return model
+
+    monkeypatch.setattr("game_runner.session.init_chat_model", initialize)
+    status = await run_session(settings, repository, None if initialize_model else model)
+
+    assert initialized == ([("test-model", {
+        "model_provider": "openai", "base_url": "http://localhost:8080/v1",
+        "api_key": "local", "timeout": 120, "max_retries": 0,
+        "temperature": 0.7, "extra_body": {"top_k": 40},
+    })] if initialize_model else [])
 
     assert status == repository.session_status == "dead"
     assert len(client.actions) == 1
