@@ -1,6 +1,7 @@
 """Nodes in the one-action Rogue agent graph."""
 
 import json
+import re
 import time
 from typing import Annotated
 
@@ -94,7 +95,14 @@ def make_nodes(
         try:
             if not isinstance(response.content, str):
                 raise ValueError("model content must be a JSON string")
-            decision = Decision.model_validate(json.loads(response.content))
+            content = response.content.strip()
+            fenced = re.fullmatch(
+                r"(?P<fence>`{3,})(?:json)?\s*(?P<body>.*?)\s*(?P=fence)",
+                content, flags=re.DOTALL | re.IGNORECASE,
+            )
+            if fenced:
+                content = fenced.group("body")
+            decision = Decision.model_validate(json.loads(content))
             validate_mode(decision, state["observation"].mode)
         except (ValueError, ValidationError) as exc:
             error = str(exc)

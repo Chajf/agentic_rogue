@@ -98,13 +98,17 @@ class FakeClient:
 
 
 @pytest.mark.asyncio
-async def test_one_graph_invocation_retries_model_but_executes_one_action() -> None:
+@pytest.mark.parametrize("wrapper", [
+    "{}", "```json\n{}\n```", "```\n{}\n```", "````json\n{}\n````",
+    " \n```JSON\r\n{}\r\n```\n ",
+])
+async def test_one_graph_invocation_retries_model_but_executes_one_action(wrapper) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
     client = FakeClient(observed(episode_id, 1))
     model = FakeModel(
         "not JSON",
-        json.dumps({"action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north."}),
+        wrapper.format(json.dumps({"action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north."})),
     )
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=2)
 
@@ -117,16 +121,20 @@ async def test_one_graph_invocation_retries_model_but_executes_one_action() -> N
     assert len(client.actions) == len(repository.events) == 1
     assert repository.events[0]["outcome"] == "succeeded"
     assert repository.calls[1]["usage_metadata"]["input_tokens"] == 10
+    assert repository.calls[1]["raw_response"]["content"] == wrapper.format(json.dumps({
+        "action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north.",
+    }))
 
 
 @pytest.mark.asyncio
-async def test_invalid_decision_never_reaches_game() -> None:
+@pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```"])
+async def test_invalid_decision_never_reaches_game(wrapper) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
     client = FakeClient(observed(episode_id, 1))
-    model = FakeModel(json.dumps({
+    model = FakeModel(wrapper.format(json.dumps({
         "action": {"type": "semantic", "action": "EAT"}, "rationale": "Eat.",
-    }))
+    })))
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
 
     with pytest.raises(DecisionValidationError):
