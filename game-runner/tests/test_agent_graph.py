@@ -98,13 +98,17 @@ class FakeClient:
 
 
 @pytest.mark.asyncio
-async def test_one_graph_invocation_retries_model_but_executes_one_action() -> None:
+@pytest.mark.parametrize("wrapper", [
+    "{}", "```json\n{}\n```", "```\n{}\n```", "````json\n{}\n````",
+    " \n```JSON\r\n{}\r\n```\n ",
+])
+async def test_one_graph_invocation_retries_model_but_executes_one_action(wrapper) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
     client = FakeClient(observed(episode_id, 1))
     model = FakeModel(
         "not JSON",
-        json.dumps({"action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north."}),
+        wrapper.format(json.dumps({"action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north."})),
     )
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=2)
 
@@ -117,16 +121,20 @@ async def test_one_graph_invocation_retries_model_but_executes_one_action() -> N
     assert len(client.actions) == len(repository.events) == 1
     assert repository.events[0]["outcome"] == "succeeded"
     assert repository.calls[1]["usage_metadata"]["input_tokens"] == 10
+    assert repository.calls[1]["raw_response"]["content"] == wrapper.format(json.dumps({
+        "action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north.",
+    }))
 
 
 @pytest.mark.asyncio
-async def test_invalid_decision_never_reaches_game() -> None:
+@pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```"])
+async def test_invalid_decision_never_reaches_game(wrapper) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
     client = FakeClient(observed(episode_id, 1))
-    model = FakeModel(json.dumps({
+    model = FakeModel(wrapper.format(json.dumps({
         "action": {"type": "semantic", "action": "EAT"}, "rationale": "Eat.",
-    }))
+    })))
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
 
     with pytest.raises(DecisionValidationError):
@@ -219,7 +227,8 @@ def test_selection_mode_accepts_only_matching_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runner_stops_after_terminal_observation(monkeypatch) -> None:
+@pytest.mark.parametrize("initialize_model", [False, True])
+async def test_runner_stops_after_terminal_observation(monkeypatch, initialize_model) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
     client = FakeClient(observed(episode_id, 1, status="dead", mode="game_over"))
@@ -233,9 +242,23 @@ async def test_runner_stops_after_terminal_observation(monkeypatch) -> None:
         model_base_url="http://localhost:8080/v1", model_name="test-model", model_api_key="local",
         model_timeout_seconds=120, game_seed=123, max_game_actions=10,
         max_model_calls_per_action=1, context_token_budget=8192,
+        model_kwargs={"temperature": 0.7, "extra_body": {"top_k": 40}},
     )
 
-    status = await run_session(settings, repository, model)
+    initialized = []
+
+    def initialize(name, **kwargs):
+        initialized.append((name, kwargs))
+        return model
+
+    monkeypatch.setattr("game_runner.session.init_chat_model", initialize)
+    status = await run_session(settings, repository, None if initialize_model else model)
+
+    assert initialized == ([("test-model", {
+        "model_provider": "openai", "base_url": "http://localhost:8080/v1",
+        "api_key": "local", "timeout": 120, "max_retries": 0,
+        "temperature": 0.7, "extra_body": {"top_k": 40},
+    })] if initialize_model else [])
 
     assert status == repository.session_status == "dead"
     assert len(client.actions) == 1
