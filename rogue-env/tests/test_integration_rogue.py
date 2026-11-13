@@ -127,3 +127,53 @@ async def test_collects_messages_across_more_prompt() -> None:
             assert "--More--" not in combat.messages[0]
         finally:
             await environment.close()
+
+
+@pytest.mark.skipif(not ROGUE_BINARY, reason="TEST_ROGUE_BINARY is not set")
+async def test_scripted_inventory_selection_rest_and_movement() -> None:
+    from rogue_api.models import KeyActionRequest
+
+    with tempfile.TemporaryDirectory(prefix="rogue-", dir="/tmp") as data_dir:
+        environment = RogueEnv(Settings(
+            rogue_binary=Path(ROGUE_BINARY), data_dir=Path(data_dir), quiet_window_seconds=0.08,
+        ))
+        try:
+            runs = []
+            for _ in range(2):
+                initial = await environment.reset(12345)
+                observations = [initial]
+                for key in ("i", "e", "a", ".", "h", "h"):
+                    observations.append(await environment.step(
+                        initial.episode_id, KeyActionRequest(type="key", key=key),
+                    ))
+                runs.append(observations)
+            initial, inventory, selection, eaten, rested, _, moved = runs[0]
+            assert any("a) Some food" in message for message in inventory.messages)
+            assert selection.mode == "select_item"
+            assert any("tasted good" in message.lower() for message in eaten.messages)
+            assert rested.state.hp == eaten.state.hp == initial.state.max_hp
+            assert moved.screen != rested.screen
+            assert [observation.api_step for observation in runs[0]] == list(range(7))
+            assert [observation.screen for observation in runs[0]] == [observation.screen for observation in runs[1]]
+        finally:
+            await environment.close()
+
+
+@pytest.mark.skipif(not ROGUE_BINARY, reason="TEST_ROGUE_BINARY is not set")
+async def test_scripted_stair_descent_reaches_second_level() -> None:
+    from rogue_api.models import KeyActionRequest
+
+    with tempfile.TemporaryDirectory(prefix="rogue-", dir="/tmp") as data_dir:
+        environment = RogueEnv(Settings(
+            rogue_binary=Path(ROGUE_BINARY), data_dir=Path(data_dir), quiet_window_seconds=0.08,
+        ))
+        try:
+            initial = await environment.reset(3)
+            assert initial.state.dungeon_level == 1
+            for key in "hkk>":
+                current = await environment.step(initial.episode_id, KeyActionRequest(type="key", key=key))
+            assert current.state.dungeon_level == 2
+            assert current.api_step == 4
+            assert current.episode_id == initial.episode_id
+        finally:
+            await environment.close()
