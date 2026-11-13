@@ -16,7 +16,8 @@ from game_runner.context.planning import ContextSettings
 from game_runner.context.progress import Progress
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import SessionInterrupted
-from game_runner.persistence.repository import GameRepository, ObservationOutcome
+from game_runner.context.transitions import ObservationOutcome
+from game_runner.persistence.repository import GameRepository
 from game_runner.prompts.system import PROMPT_VERSION
 
 

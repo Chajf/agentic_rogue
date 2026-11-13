@@ -2,29 +2,20 @@
 
 from dataclasses import asdict
 import time
-from typing import Annotated
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel, ConfigDict, Field
 
 from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.clients.rogue import (
-    ActionRequest, KeyActionRequest, RogueAPIError, RogueClient, RogueTransportError,
+    RogueAPIError, RogueClient, RogueTransportError,
 )
 from game_runner.context.budget import ContextLimitError, RETRY_RESERVE, count_messages
-from game_runner.context.compaction import decode_json
 from game_runner.context.planning import ContextPlanner, ContextSettings
 from game_runner.context.progress import Progress
+from game_runner.decision import parse_decision
 from game_runner.graph.state import StepState
 from game_runner.persistence.repository import GameRepository
-
-
-class Decision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    action: Annotated[ActionRequest | KeyActionRequest, Field(discriminator="type")]
-    rationale: str = Field(min_length=1, max_length=300)
 
 
 class DecisionValidationError(RuntimeError):
@@ -33,26 +24,6 @@ class DecisionValidationError(RuntimeError):
 
 class SessionInterrupted(RuntimeError):
     pass
-
-
-def validate_mode(decision: Decision, mode: str) -> None:
-    action = decision.action
-    if mode == "confirm":
-        if not isinstance(action, ActionRequest) or action.action not in {"CONFIRM", "CANCEL"}:
-            raise ValueError("confirm mode requires CONFIRM or CANCEL")
-    elif mode in {"select_item", "select_direction", "select_hand"}:
-        if isinstance(action, ActionRequest) and action.action != "CANCEL":
-            raise ValueError(f"{mode} requires a key action or CANCEL")
-        if isinstance(action, KeyActionRequest):
-            allowed = {
-                "select_item": set("abcdefghijklmnopqrstuvwxyz*"),
-                "select_direction": set("hjklyubn"),
-                "select_hand": {"l", "r"},
-            }[mode]
-            if action.key not in allowed:
-                raise ValueError(f"{mode} received an invalid key")
-    elif mode in {"game_over", "more"}:
-        raise ValueError(f"cannot choose an action in {mode} mode")
 
 
 def make_nodes(
@@ -113,10 +84,9 @@ def make_nodes(
         response = state["response"]
         raw = response.model_dump(mode="json")
         error: str | None = None
-        decision: Decision | None = None
+        decision = None
         try:
-            decision = Decision.model_validate(decode_json(response.content))
-            validate_mode(decision, state["observation"].mode)
+            decision = parse_decision(response.content, state["observation"].mode)
         except ValueError as exc:
             error = str(exc)
         repository.finish_model_call(

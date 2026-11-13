@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 from game_runner.clients.rogue import ActionRequest, KeyActionRequest, Observation
 from game_runner.context.progress import Progress
-from game_runner.persistence.repository import ObservationOutcome
+from game_runner.context.transitions import ObservationOutcome
 
 
 class StepState(TypedDict):
