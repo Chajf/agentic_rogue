@@ -1,11 +1,30 @@
 """Write-ahead records for model calls and Rogue API requests."""
 
+from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from game_runner.clients.rogue import Observation
+
 from .database import connect
+
+ObservationOutcome = Literal["succeeded", "uncertain"]
+
+
+@dataclass(frozen=True)
+class DecisionTransition:
+    input_event_id: int
+    input_observation: Observation
+    input_outcome: ObservationOutcome
+    model_call_id: int
+    action: dict
+    rationale: str
+    output_event_id: int
+    output_observation: Observation
+    output_outcome: Literal["succeeded"]
 
 
 class GameRepository:
@@ -104,16 +123,51 @@ class GameRepository:
                 ),
             )
 
-    def recent_actions(self, session_id: UUID, limit: int = 100) -> list[dict]:
+    def recent_transitions(
+        self, session_id: UUID, observation_event_id: int, limit: int,
+    ) -> list[DecisionTransition]:
+        if limit == 0:
+            return []
         with connect() as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
-                    "SELECT event.action_request, event.observation, call.decision_rationale "
-                    "FROM game_events AS event "
-                    "LEFT JOIN model_calls AS call ON call.id = event.model_call_id "
-                    "WHERE event.session_id = %s AND event.kind = 'action' "
-                    "AND event.observation IS NOT NULL "
-                    "ORDER BY event.id DESC LIMIT %s",
-                    (session_id, limit),
+                    """
+                    WITH RECURSIVE completed AS NOT MATERIALIZED (
+                        SELECT input.id AS input_event_id, input.observation AS input_observation,
+                               input.outcome AS input_outcome, call.id AS model_call_id,
+                               call.parsed_action AS action, call.decision_rationale AS rationale,
+                               output.id AS output_event_id, output.observation AS output_observation,
+                               output.outcome AS output_outcome
+                        FROM game_events AS output
+                        JOIN model_calls AS call
+                            ON call.id = output.model_call_id AND call.session_id = output.session_id
+                        JOIN game_events AS input
+                            ON input.id = call.observation_event_id AND input.session_id = call.session_id
+                        WHERE output.session_id = %s AND output.kind = 'action'
+                          AND output.outcome = 'succeeded' AND output.observation IS NOT NULL
+                          AND call.status = 'valid' AND call.parsed_action IS NOT NULL
+                          AND call.decision_rationale IS NOT NULL
+                          AND input.id < output.id AND input.observation IS NOT NULL
+                          AND (input.outcome = 'succeeded'
+                               OR (input.kind = 'action' AND input.outcome = 'uncertain'))
+                    ), history AS (
+                        SELECT completed.*, 1 AS depth FROM completed WHERE output_event_id = %s
+                        UNION ALL
+                        SELECT completed.*, history.depth + 1
+                        FROM history JOIN completed ON completed.output_event_id = history.input_event_id
+                        WHERE history.depth < %s
+                    )
+                    SELECT input_event_id, input_observation, input_outcome, model_call_id, action,
+                           rationale, output_event_id, output_observation, output_outcome
+                    FROM history ORDER BY depth DESC
+                    """,
+                    (session_id, observation_event_id, limit),
                 )
-                return list(reversed(cursor.fetchall()))
+                return [
+                    DecisionTransition(**{
+                        **row,
+                        "input_observation": Observation.model_validate(row["input_observation"]),
+                        "output_observation": Observation.model_validate(row["output_observation"]),
+                    })
+                    for row in cursor.fetchall()
+                ]

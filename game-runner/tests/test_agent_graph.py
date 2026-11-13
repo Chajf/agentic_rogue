@@ -9,14 +9,19 @@ from game_runner.context.messages import build_messages
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import Decision, DecisionValidationError, SessionInterrupted, validate_mode
 from game_runner.config import Settings
+from game_runner.persistence.repository import DecisionTransition
 from game_runner.session import run_session
 
 
-def observed(episode_id, step=0, *, status="running", mode="normal") -> Observation:
+def observed(
+    episode_id, step=0, *, status="running", mode="normal", message="A message",
+    screen=None,
+) -> Observation:
     return Observation.model_validate({
         "episode_id": str(episode_id), "seed": 123, "api_step": step,
-        "status": status, "mode": mode, "messages": ["A message"],
-        "screen": ["@  .", "   %"], "cursor": {"row": 0, "column": 0},
+        "status": status, "mode": mode, "messages": [message],
+        "screen": screen if screen is not None else ["@  .", "   %"],
+        "cursor": {"row": 0, "column": 0},
         "state": {"hp": 12, "dungeon_level": 1}, "raw_output": "",
         "terminated": status != "running", "error": None,
     })
@@ -38,9 +43,32 @@ class FakeRepository:
     def __init__(self):
         self.calls = []
         self.events = []
+        self.history_queries = []
 
-    def recent_actions(self, _):
-        return []
+    def recent_transitions(self, session_id, observation_event_id, limit):
+        self.history_queries.append((session_id, observation_event_id, limit))
+        history = []
+        for _ in range(limit):
+            if observation_event_id > len(self.events):
+                break
+            output = self.events[observation_event_id - 1]
+            if output["kind"] != "action" or output["outcome"] != "succeeded":
+                break
+            call_id = output["model_call_id"]
+            call = self.calls[call_id - 1]
+            input_id = call["observation_event_id"]
+            before = self.events[input_id - 1]
+            history.append(DecisionTransition(
+                input_event_id=input_id,
+                input_observation=Observation.model_validate(before["observation"]),
+                input_outcome=before["outcome"], model_call_id=call_id,
+                action=call["parsed_action"], rationale=call["decision_rationale"],
+                output_event_id=observation_event_id,
+                output_observation=Observation.model_validate(output["observation"]),
+                output_outcome=output["outcome"],
+            ))
+            observation_event_id = input_id
+        return list(reversed(history))
 
     def interrupt_open_sessions(self):
         self.interrupted_old_sessions = True
@@ -139,6 +167,31 @@ async def test_one_graph_invocation_retries_model_but_executes_one_action(wrappe
 
 
 @pytest.mark.asyncio
+async def test_provider_error_preserves_observation_link_and_exact_messages() -> None:
+    class FailingModel:
+        async def ainvoke(self, messages):
+            self.messages = messages
+            raise RuntimeError("provider unavailable")
+
+    episode_id = uuid4()
+    repository = FakeRepository()
+    client = FakeClient(observed(episode_id, 1))
+    model = FailingModel()
+    graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=2)
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        await graph.ainvoke(input_state(episode_id))
+
+    assert not client.actions
+    call, = repository.calls
+    assert call["status"] == "error"
+    assert call["observation_event_id"] == 100
+    assert call["input_messages"] == [
+        {"role": message.type, "content": message.content} for message in model.messages
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```"])
 async def test_invalid_decision_never_reaches_game(wrapper) -> None:
     episode_id = uuid4()
@@ -156,10 +209,11 @@ async def test_invalid_decision_never_reaches_game(wrapper) -> None:
 
 
 @pytest.mark.asyncio
-async def test_timeout_with_unchanged_step_interrupts_without_retry() -> None:
+@pytest.mark.parametrize("same_episode, recovered_step", [(True, 0), (True, 2), (False, 1)])
+async def test_timeout_with_unverified_state_interrupts_without_retry(same_episode, recovered_step) -> None:
     episode_id = uuid4()
     repository = FakeRepository()
-    client = FakeClient(observed(episode_id, 0), timeout=True)
+    client = FakeClient(observed(episode_id if same_episode else uuid4(), recovered_step), timeout=True)
     model = FakeModel(json.dumps({
         "action": {"type": "semantic", "action": "REST"}, "rationale": "Wait.",
     }))
@@ -169,6 +223,7 @@ async def test_timeout_with_unchanged_step_interrupts_without_retry() -> None:
         await graph.ainvoke(input_state(episode_id))
     assert len(client.actions) == 1
     assert repository.events[0]["outcome"] == "uncertain"
+    assert "observation" not in repository.events[0]
 
 
 @pytest.mark.asyncio
@@ -208,19 +263,32 @@ async def test_rejected_game_action_is_logged_and_not_retried(status_code) -> No
     assert repository.events[0]["http_status"] == status_code
 
 
-def test_history_omits_previous_screen_and_preserves_current_screen() -> None:
+def test_context_preserves_order_and_drops_whole_oldest_pairs() -> None:
     episode_id = uuid4()
-    history = [{
-        "action_request": {"type": "semantic", "action": "REST"},
-        "observation": {
-            "screen": ["OLD SECRET SCREEN"], "messages": ["You wait."],
-            "state": {"hp": 12}, "mode": "normal", "status": "running",
-        },
-    }]
-    messages = build_messages(observed(episode_id), history, 8192)
-    assert "OLD SECRET SCREEN" not in messages[1].content
-    assert "@  ." in messages[1].content
-    assert "You wait." in messages[1].content
+    reset = observed(episode_id, message="Welcome.", screen=["OLD RESET SCREEN"])
+    after_rest = observed(episode_id, 1, message="You wait.", screen=["OLD REST SCREEN"])
+    current = observed(episode_id, 2, message="You search.", screen=["@  .  ", "   %  "])
+    rest = {"type": "semantic", "action": "REST"}
+    search = {"type": "semantic", "action": "SEARCH"}
+    history = [
+        DecisionTransition(1, reset, "succeeded", 1, rest, "Wait.", 2, after_rest, "succeeded"),
+        DecisionTransition(2, after_rest, "succeeded", 2, search, "Look.", 3, current, "succeeded"),
+    ]
+    messages = build_messages(current, history, 8192)
+    assert [message.type for message in messages] == ["system", "human", "ai", "human", "ai", "human"]
+    assert "Welcome." in messages[1].content
+    assert json.loads(messages[2].content) == {"action": rest, "rationale": "Wait."}
+    assert "You wait." in messages[3].content
+    assert json.loads(messages[4].content) == {"action": search, "rationale": "Look."}
+    assert "You search." in messages[5].content
+    combined = "\n".join(message.content for message in messages)
+    assert "OLD RESET SCREEN" not in combined
+    assert "OLD REST SCREEN" not in combined
+    assert combined.count("@  .  \n   %  ") == 1
+    recent_only = [messages[0], *messages[3:]]
+    budget = (sum(len(message.content) for message in recent_only) + 4) // 3
+    assert build_messages(current, history, budget) == recent_only
+    assert build_messages(current, history, 1) == [messages[0], messages[-1]]
 
 
 def test_selection_mode_accepts_only_matching_key() -> None:
@@ -230,6 +298,71 @@ def test_selection_mode_accepts_only_matching_key() -> None:
     validate_mode(valid, "select_direction")
     with pytest.raises(ValueError, match="invalid key"):
         validate_mode(valid, "select_hand")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history_limit", [0, 1, 8])
+async def test_runner_replays_only_completed_decisions_after_recovery(monkeypatch, history_limit) -> None:
+    episode_id = uuid4()
+
+    class RecoveringClient(FakeClient):
+        initial = observed(episode_id, message="Reset message.")
+
+        async def action(self, episode_id, action):
+            self.actions.append((episode_id, action))
+            step = len(self.actions)
+            if step == 2:
+                raise RogueTransportError("timeout")
+            return observed(
+                episode_id, step, status="dead" if step == 5 else "running",
+                message=f"Action result {step}.",
+            )
+
+        async def observe(self):
+            return observed(episode_id, 2, message="Recovered state.")
+
+    def decision(rationale):
+        return json.dumps({
+            "action": {"type": "semantic", "action": "REST"}, "rationale": rationale,
+        })
+
+    model = FakeModel("bad JSON", f"```json\n{decision('First')}\n```", *(
+        decision(rationale) for rationale in ("Timed out", "Third", "Fourth", "Fifth")
+    ))
+    client = RecoveringClient(None)
+    repository = FakeRepository()
+    monkeypatch.setattr("game_runner.session.RogueClient", lambda *_: client)
+    monkeypatch.setenv("MODEL_BASE_URL", "http://localhost:8080/v1")
+    monkeypatch.setenv("MODEL_NAME", "test-model")
+    monkeypatch.setenv("MAX_MODEL_CALLS_PER_ACTION", "2")
+    monkeypatch.setenv("MAX_GAME_ACTIONS", "10")
+    monkeypatch.setenv("HISTORY_RECENT_INTERACTIONS", str(history_limit))
+
+    assert await run_session(Settings.from_env(), repository, model) == "dead"
+
+    assert [call["observation_event_id"] for call in repository.calls] == [1, 1, 2, 3, 4, 5]
+    assert [event.get("model_call_id") for event in repository.events] == [None, 2, 3, 4, 5, 6]
+    assert [query[2] for query in repository.history_queries] == [history_limit] * 5
+    assert repository.prompt_version == "rogue-v1.2"
+    for call, messages in zip(repository.calls, model.inputs, strict=True):
+        assert call["input_messages"] == [
+            {"role": message.type, "content": message.content} for message in messages
+        ]
+    before_timeout = model.inputs[2]
+    assert [message.type for message in before_timeout] == (
+        ["system", "human", "ai", "human"] if history_limit else ["system", "human"]
+    )
+    if history_limit:
+        assert "Reset message." in before_timeout[1].content
+        assert before_timeout[2].content.startswith('{"action":')
+        assert json.loads(before_timeout[2].content)["rationale"] == "First"
+    assert "Action result 1." in before_timeout[-1].content
+    after_recovery = model.inputs[3]
+    assert [message.type for message in after_recovery] == ["system", "human"]
+    assert "recovered after an action timeout" in after_recovery[-1].content
+    assert "Recovered state." in after_recovery[-1].content
+    rebuilt_history = [json.loads(message.content)["rationale"] for message in model.inputs[-1] if message.type == "ai"]
+    assert rebuilt_history == {0: [], 1: ["Fourth"], 8: ["Third", "Fourth"]}[history_limit]
 
 
 @pytest.mark.asyncio

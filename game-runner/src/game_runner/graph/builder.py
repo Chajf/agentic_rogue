@@ -11,12 +11,13 @@ from game_runner.persistence.repository import GameRepository
 
 def build_graph(
     model: BaseChatModel, client: RogueClient, repository: GameRepository,
-    *, context_token_budget: int, max_model_calls: int,
+    *, context_token_budget: int, max_model_calls: int, history_recent_interactions: int = 8,
 ):
     context, invoke_model, validate, perform_action = make_nodes(
         model, client, repository,
         context_token_budget=context_token_budget,
         max_model_calls=max_model_calls,
+        history_recent_interactions=history_recent_interactions,
     )
     graph = StateGraph(StepState)
     graph.add_node("context", context)

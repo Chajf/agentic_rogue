@@ -35,3 +35,19 @@ def test_model_name_uses_dedicated_variable(model_env, monkeypatch):
     monkeypatch.setenv("MODEL_KWARGS", '{"model":"other-model"}')
     with pytest.raises(ValueError, match="Use MODEL_NAME"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize("value, expected", [(None, 8), ("0", 0), ("3", 3)])
+def test_history_recent_interactions(model_env, monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("HISTORY_RECENT_INTERACTIONS", raising=False)
+    else:
+        monkeypatch.setenv("HISTORY_RECENT_INTERACTIONS", value)
+    assert Settings.from_env().history_recent_interactions == expected
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", "text"])
+def test_history_recent_interactions_rejects_invalid_values(model_env, monkeypatch, value):
+    monkeypatch.setenv("HISTORY_RECENT_INTERACTIONS", value)
+    with pytest.raises(ValueError, match="HISTORY_RECENT_INTERACTIONS"):
+        Settings.from_env()

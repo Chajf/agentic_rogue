@@ -19,6 +19,7 @@ class Settings:
     max_model_calls_per_action: int
     context_token_budget: int
     model_kwargs: dict[str, Any] = field(default_factory=dict)
+    history_recent_interactions: int = 8
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,6 +32,12 @@ class Settings:
             raise ValueError("MODEL_KWARGS must be a JSON object")
         if "model" in model_kwargs:
             raise ValueError("Use MODEL_NAME to set the model, not MODEL_KWARGS")
+        try:
+            history_recent_interactions = int(os.getenv("HISTORY_RECENT_INTERACTIONS", "8"))
+        except ValueError as exc:
+            raise ValueError("HISTORY_RECENT_INTERACTIONS must be a non-negative integer") from exc
+        if history_recent_interactions < 0:
+            raise ValueError("HISTORY_RECENT_INTERACTIONS must be a non-negative integer")
         settings = cls(
             rogue_api_url=os.getenv("ROGUE_API_URL", "http://localhost:8000"),
             rogue_timeout_seconds=float(os.getenv("ROGUE_TIMEOUT_SECONDS", "10")),
@@ -43,6 +50,7 @@ class Settings:
             max_model_calls_per_action=int(os.getenv("MAX_MODEL_CALLS_PER_ACTION", "3")),
             context_token_budget=int(os.getenv("CONTEXT_TOKEN_BUDGET", "8192")),
             model_kwargs=model_kwargs,
+            history_recent_interactions=history_recent_interactions,
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

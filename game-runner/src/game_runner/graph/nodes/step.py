@@ -54,12 +54,17 @@ def validate_mode(decision: Decision, mode: str) -> None:
 
 def make_nodes(
     model: BaseChatModel, client: RogueClient, repository: GameRepository,
-    *, context_token_budget: int, max_model_calls: int,
+    *, context_token_budget: int, max_model_calls: int, history_recent_interactions: int,
 ):
     def context(state: StepState) -> dict:
-        history = repository.recent_actions(state["session_id"])
+        history = repository.recent_transitions(
+            state["session_id"], state["observation_event_id"], history_recent_interactions,
+        )
         return {
-            "messages": build_messages(state["observation"], history, context_token_budget),
+            "messages": build_messages(
+                state["observation"], history, context_token_budget,
+                observation_outcome=state["observation_outcome"],
+            ),
             "attempts": 0,
             "action": None,
         }
