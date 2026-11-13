@@ -54,8 +54,11 @@ class FakeRepository:
         self.session_status = status
         self.session_details = kwargs
 
-    def start_model_call(self, session_id, input_messages):
-        self.calls.append({"session_id": session_id, "input_messages": input_messages})
+    def start_model_call(self, session_id, input_messages, *, observation_event_id):
+        self.calls.append({
+            "session_id": session_id, "input_messages": input_messages,
+            "observation_event_id": observation_event_id,
+        })
         return len(self.calls)
 
     def finish_model_call(self, call_id, status, **kwargs):
@@ -97,6 +100,13 @@ class FakeClient:
         return self.initial
 
 
+def input_state(episode_id):
+    return {
+        "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
+        "observation_event_id": 100, "observation_outcome": "succeeded",
+    }
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("wrapper", [
     "{}", "```json\n{}\n```", "```\n{}\n```", "````json\n{}\n````",
@@ -112,14 +122,16 @@ async def test_one_graph_invocation_retries_model_but_executes_one_action(wrappe
     )
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=2)
 
-    result = await graph.ainvoke({
-        "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
-    })
+    result = await graph.ainvoke(input_state(episode_id))
 
     assert result["next_observation"].api_step == 1
+    assert result["next_observation_event_id"] == 1
+    assert result["next_observation_outcome"] == "succeeded"
     assert [call["status"] for call in repository.calls] == ["invalid", "valid"]
+    assert [call["observation_event_id"] for call in repository.calls] == [100, 100]
     assert len(client.actions) == len(repository.events) == 1
     assert repository.events[0]["outcome"] == "succeeded"
+    assert repository.events[0]["model_call_id"] == 2
     assert repository.calls[1]["usage_metadata"]["input_tokens"] == 10
     assert repository.calls[1]["raw_response"]["content"] == wrapper.format(json.dumps({
         "action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north.",
@@ -138,9 +150,7 @@ async def test_invalid_decision_never_reaches_game(wrapper) -> None:
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
 
     with pytest.raises(DecisionValidationError):
-        await graph.ainvoke({
-            "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
-        })
+        await graph.ainvoke(input_state(episode_id))
     assert not client.actions
     assert repository.calls[0]["status"] == "invalid"
 
@@ -156,9 +166,7 @@ async def test_timeout_with_unchanged_step_interrupts_without_retry() -> None:
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
 
     with pytest.raises(SessionInterrupted):
-        await graph.ainvoke({
-            "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
-        })
+        await graph.ainvoke(input_state(episode_id))
     assert len(client.actions) == 1
     assert repository.events[0]["outcome"] == "uncertain"
 
@@ -173,10 +181,10 @@ async def test_timeout_with_advanced_step_recovers_without_retry() -> None:
     }))
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
 
-    result = await graph.ainvoke({
-        "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
-    })
+    result = await graph.ainvoke(input_state(episode_id))
     assert result["next_observation"].api_step == 1
+    assert result["next_observation_event_id"] == 1
+    assert result["next_observation_outcome"] == "uncertain"
     assert len(client.actions) == 1
     assert repository.events[0]["outcome"] == "uncertain"
     assert repository.events[0]["observation"]["raw_output"] == ""
@@ -194,9 +202,7 @@ async def test_rejected_game_action_is_logged_and_not_retried(status_code) -> No
     graph = build_graph(model, client, repository, context_token_budget=8192, max_model_calls=1)
 
     with pytest.raises(RogueAPIError):
-        await graph.ainvoke({
-            "session_id": uuid4(), "observation": observed(episode_id), "attempts": 0,
-        })
+        await graph.ainvoke(input_state(episode_id))
     assert len(client.actions) == 1
     assert repository.events[0]["outcome"] == "failed"
     assert repository.events[0]["http_status"] == status_code
@@ -263,4 +269,5 @@ async def test_runner_stops_after_terminal_observation(monkeypatch, initialize_m
     assert status == repository.session_status == "dead"
     assert len(client.actions) == 1
     assert [event["kind"] for event in repository.events] == ["reset", "action"]
+    assert [call["observation_event_id"] for call in repository.calls] == [1]
     assert repository.interrupted_old_sessions

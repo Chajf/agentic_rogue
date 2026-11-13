@@ -67,7 +67,9 @@ def make_nodes(
     async def invoke_model(state: StepState) -> dict:
         messages: list[BaseMessage] = state["messages"]
         input_messages = [{"role": message.type, "content": message.content} for message in messages]
-        call_id = repository.start_model_call(state["session_id"], input_messages)
+        call_id = repository.start_model_call(
+            state["session_id"], input_messages, observation_event_id=state["observation_event_id"],
+        )
         started = time.monotonic()
         try:
             response = await model.ainvoke(messages)
@@ -160,7 +162,10 @@ def make_nodes(
                 observation=recovered.model_dump(mode="json"),
                 error=f"{exc}; state recovered but action output was lost",
             )
-            return {"next_observation": recovered}
+            return {
+                "next_observation": recovered, "next_observation_event_id": event_id,
+                "next_observation_outcome": "uncertain",
+            }
         except Exception as exc:
             repository.finish_game_event(event_id, "uncertain", error=str(exc))
             raise
@@ -168,6 +173,9 @@ def make_nodes(
             event_id, "succeeded", api_step=observed.api_step,
             http_status=200, observation=observed.model_dump(mode="json"),
         )
-        return {"next_observation": observed}
+        return {
+            "next_observation": observed, "next_observation_event_id": event_id,
+            "next_observation_outcome": "succeeded",
+        }
 
     return context, invoke_model, validate, perform_action

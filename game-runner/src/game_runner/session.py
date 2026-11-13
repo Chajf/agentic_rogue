@@ -10,6 +10,7 @@ from game_runner.clients.rogue import RogueAPIError, RogueClient, RogueTransport
 from game_runner.config import Settings
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import SessionInterrupted
+from game_runner.graph.state import ObservationOutcome
 from game_runner.persistence.repository import GameRepository
 from game_runner.prompts.system import PROMPT_VERSION
 
@@ -75,11 +76,15 @@ async def run_session(settings: Settings, repository: GameRepository, model=None
         except Exception as exc:
             return finish("error", str(exc))
         actions = 0
+        observation_event_id = event_id
+        observation_outcome: ObservationOutcome = "succeeded"
         while not observation.terminated and actions < settings.max_game_actions:
             try:
-                result = await graph.ainvoke(
-                    {"session_id": session_id, "observation": observation, "attempts": 0}
-                )
+                result = await graph.ainvoke({
+                    "session_id": session_id, "observation": observation,
+                    "observation_event_id": observation_event_id, "observation_outcome": observation_outcome,
+                    "attempts": 0,
+                })
             except SessionInterrupted as exc:
                 return finish("interrupted", str(exc))
             except RogueAPIError as exc:
@@ -88,6 +93,8 @@ async def run_session(settings: Settings, repository: GameRepository, model=None
             except Exception as exc:
                 return finish("error", str(exc))
             observation = result["next_observation"]
+            observation_event_id = result["next_observation_event_id"]
+            observation_outcome = result["next_observation_outcome"]
             actions += 1
             print(
                 json.dumps({

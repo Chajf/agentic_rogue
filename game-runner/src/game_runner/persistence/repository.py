@@ -39,12 +39,14 @@ class GameRepository:
                 (status, episode_id, seed, error, status, session_id),
             )
 
-    def start_model_call(self, session_id: UUID, input_messages: list[dict]) -> int:
+    def start_model_call(
+        self, session_id: UUID, input_messages: list[dict], *, observation_event_id: int,
+    ) -> int:
         with connect() as connection:
             row = connection.execute(
-                "INSERT INTO model_calls(session_id, input_messages, status) "
-                "VALUES (%s, %s, 'pending') RETURNING id",
-                (session_id, Jsonb(input_messages)),
+                "INSERT INTO model_calls(session_id, input_messages, observation_event_id, status) "
+                "VALUES (%s, %s, %s, 'pending') RETURNING id",
+                (session_id, Jsonb(input_messages), observation_event_id),
             ).fetchone()
             assert row is not None
             return row[0]
