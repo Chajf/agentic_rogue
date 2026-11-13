@@ -167,3 +167,83 @@ def test_reads_only_the_bounded_same_session_chain(isolated_database):
     assert rebuilt[0].input_event_id == recovered
     assert rebuilt[0].input_outcome == "uncertain"
     assert rebuilt[0].model_call_id == fourth_call
+
+
+def test_p2_migrates_p1_data_and_serializes_revision_publication(isolated_database, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from game_runner.context.memory import EpisodeMemory
+
+    for migration in sorted(MIGRATIONS.glob("00[12]_*.sql")):
+        (tmp_path / migration.name).write_text(migration.read_text())
+    with monkeypatch.context() as patch:
+        patch.setenv("MIGRATIONS_DIR", str(tmp_path))
+        migrate.main()
+    session, episode = uuid4(), uuid4()
+    with isolated_database() as connection:
+        connection.execute(
+            "INSERT INTO game_sessions(id, episode_id, status, model_name, prompt_version) "
+            "VALUES (%s, %s, 'running', 'model', 'rogue-v1.2')", (session, episode),
+        )
+        reset = connection.execute(
+            "INSERT INTO game_events(session_id, kind, outcome, observation) "
+            "VALUES (%s, 'reset', 'succeeded', '{}') RETURNING id", (session,),
+        ).fetchone()[0]
+        old_call = connection.execute(
+            "INSERT INTO model_calls(session_id, observation_event_id, input_messages, status) "
+            "VALUES (%s, %s, '[]', 'valid') RETURNING id", (session, reset),
+        ).fetchone()[0]
+
+    migrate.main()
+    repo = GameRepository()
+    with isolated_database() as connection:
+        assert connection.execute(
+            "SELECT purpose, memory_revision_id, observation_event_id FROM model_calls WHERE id = %s",
+            (old_call,),
+        ).fetchone() == ("decision", None, reset)
+
+    boundary = repo.start_game_event(session, "action", model_call_id=old_call, action_request=ACTION)
+    repo.finish_game_event(boundary, "succeeded", observation={"api_step": 1}, api_step=1)
+    content = EpisodeMemory(
+        observations=[{"text": "A reset was observed.", "source_event_ids": [reset]}],
+        goals=[], unsuccessful_attempts=[], hypotheses=[], uncertainties=[],
+    )
+
+    def publish(call_id):
+        return repo.publish_memory(
+            session, episode, previous=None, through_event_id=boundary, call_id=call_id,
+            content=content, gap_event_ids=frozenset(), raw_response={"content": "summary"}, duration_ms=1,
+        )
+
+    calls = [
+        repo.start_model_call(session, [], observation_event_id=boundary, purpose="episode_summary")
+        for _ in range(2)
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, retry = pool.map(publish, calls)
+    assert first == retry == repo.latest_memory(session)
+    with isolated_database() as connection:
+        accepted_call = connection.execute(
+            "SELECT model_call_id FROM episode_memory_revisions WHERE id = %s", (first.id,),
+        ).fetchone()[0]
+    assert publish(accepted_call) == first
+    assert repo.latest_memory(uuid4()) is None
+    second_boundary = repo.start_game_event(session, "action", model_call_id=old_call, action_request=ACTION)
+    repo.finish_game_event(second_boundary, "succeeded", observation={"api_step": 2}, api_step=2)
+    summary_call = repo.start_model_call(
+        session, [], observation_event_id=second_boundary, purpose="episode_summary", memory_revision_id=first.id,
+    )
+    following = repo.publish_memory(
+        session, episode, previous=first, through_event_id=second_boundary, call_id=summary_call,
+        content=content, gap_event_ids=frozenset(), raw_response={"content": "summary"}, duration_ms=1,
+    )
+    assert following == repo.latest_memory(session)
+    assert publish(accepted_call) == first
+    assert repo.latest_memory(session) == following
+    with isolated_database() as connection:
+        assert connection.execute(
+            "SELECT through_event_id, previous_revision_id FROM episode_memory_revisions ORDER BY id",
+        ).fetchall() == [(boundary, None), (second_boundary, first.id)]
+        assert connection.execute(
+            "SELECT status FROM model_calls WHERE id = ANY(%s) ORDER BY id", (calls,),
+        ).fetchall() == [("valid",), ("valid",)]
