@@ -1,6 +1,7 @@
 """Low-level Rogue subprocess and PTY transport."""
 
 import asyncio
+from collections.abc import Callable
 import errno
 import fcntl
 import os
@@ -49,7 +50,7 @@ class RogueProcess:
         self._close_fd()
         return False
 
-    async def start(self, seed: int) -> bytes:
+    async def start(self, seed: int, startup_ready: Callable[[bytes], bool]) -> bytes:
         if self.running:
             raise RogueProcessError("Rogue is already running")
         if not self.binary.is_file():
@@ -85,7 +86,7 @@ class RogueProcess:
         self.fd = master_fd
         flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
         fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        output = await self.read_until_quiet()
+        output = await asyncio.to_thread(self._read_until_quiet_sync, startup_ready)
         if not self.running:
             raise RogueProcessError(f"Rogue exited during startup: {output.decode(errors='replace')}")
         return output
@@ -111,35 +112,47 @@ class RogueProcess:
     async def read_until_quiet(self) -> bytes:
         return await asyncio.to_thread(self._read_until_quiet_sync)
 
-    def _read_until_quiet_sync(self) -> bytes:
+    def _read_until_quiet_sync(self, startup_ready: Callable[[bytes], bool] | None = None) -> bytes:
         if self.fd is None:
             return b""
         chunks: list[bytes] = []
+        # During startup, a pause after the greeting can precede the first screen.
+        ready = startup_ready is None
         started = time.monotonic()
         last_output = started
         while True:
             now = time.monotonic()
-            if now - started >= self.timeout:
+            remaining = self.timeout - (now - started)
+            if remaining <= 0:
+                if not ready:
+                    raise TimeoutError(f"Rogue did not draw its initial screen within {self.timeout} seconds")
                 raise TimeoutError(f"Rogue output did not settle within {self.timeout} seconds")
-            wait = min(self.quiet_window - (now - last_output), self.timeout - (now - started))
+            wait = min(self.quiet_window - (now - last_output), remaining) if ready else remaining
             if wait <= 0:
                 return b"".join(chunks)
             readable, _, _ = select.select([self.fd], [], [], wait)
             if not readable:
-                return b"".join(chunks)
+                if ready:
+                    return b"".join(chunks)
+                continue
             while True:
                 try:
                     data = os.read(self.fd, 65536)
                 except BlockingIOError:
                     break
                 except OSError as exc:
-                    if exc.errno == errno.EIO:
-                        return b"".join(chunks)
-                    raise
+                    if exc.errno != errno.EIO:
+                        raise
+                    data = b""
                 if not data:
+                    if not ready:
+                        diagnostic = b"".join(chunks).decode(errors="replace")
+                        raise RogueProcessError(f"Rogue closed its terminal during startup: {diagnostic}")
                     return b"".join(chunks)
                 chunks.append(data)
                 last_output = time.monotonic()
+                if startup_ready is not None:
+                    ready = startup_ready(data)
 
     async def close(self) -> None:
         process = self.process

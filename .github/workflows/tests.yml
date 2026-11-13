@@ -19,6 +19,18 @@ jobs:
     name: Python 3.12
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     steps:
       - name: Check out repository
@@ -56,4 +68,5 @@ jobs:
       - name: Run tests
         env:
           TEST_ROGUE_BINARY: ${{ runner.temp }}/rogue5.4/rogue
+          TEST_POSTGRES_DSN: postgresql://postgres:test@localhost:${{ job.services.postgres.ports[5432] }}/postgres
         run: uv run --locked --all-packages --group test pytest -q
