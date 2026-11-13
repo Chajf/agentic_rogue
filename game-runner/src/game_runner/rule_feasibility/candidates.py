@@ -49,7 +49,8 @@ async def extract(corpus: Corpus, cases: dict, cases_digest: str, run: AnalysisR
             continue
         evidence = [{key: event[key] for key in ("id", "observation", "progress", "outcome")}
                     for event_id in case["evidence_event_ids"] if (event := corpus.events.get(event_id))]
-        action = corpus.calls[case["model_call_id"]].get("parsed_action") if "output_event_id" in case else None
+        last = corpus.events[case["evidence_event_ids"][-1]]
+        action = corpus.calls[last["model_call_id"]].get("parsed_action") if len(evidence) > 1 else None
         messages = [
             SystemMessage(content="Draft one experiential rule from the supplied observations. "
                           "Distinguish observed effects from interpretations. Keep randomized item identities local. "

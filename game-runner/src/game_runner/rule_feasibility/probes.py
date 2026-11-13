@@ -32,6 +32,9 @@ class Audit(ManifestModel):
     rationale: Text
     original: Text
     corrected: Text
+    corrected_scope: Literal["map_instance", "episode", "conditional", "general"]
+    corrected_conditions: list[Text] = Field(default_factory=list, max_length=8)
+    corrected_exceptions: list[Text] = Field(default_factory=list, max_length=8)
     corroborating_event_ids: list[EventRef] = Field(default_factory=list)
     counterevidence_event_ids: list[EventRef] = Field(default_factory=list)
 
@@ -54,6 +57,7 @@ class Review(ManifestModel):
     approved: Literal[True]
     audits: list[Audit]
     probes: list[ProbeReview]
+    cost_viable_families: list[Literal["ambiguous_movement", "conditional_rest", "item_identity"]] = Field(default_factory=list)
 
 
 def _action_key(action: dict) -> bytes:
@@ -190,6 +194,7 @@ def freeze(
             "probe_session_id": trial["session_id"], "probe_episode_id": trial["episode_id"],
             "pre_event_id": event["id"], "decision_call_id": min(call_ids),
             "history_event_ids": [history.output_event_id for history in replay],
+            "probe_seed": trial["observed_reset_seed"],
             "relation": relation, "applicability": probe.applicability, "mode": obs.mode,
             "rubric": rubric, "rubric_rationale": probe.rationale,
             "rules": {
@@ -198,7 +203,10 @@ def freeze(
                     key: records[audit.candidate_id]["candidate"][key]
                     for key in ("claim", "scope", "conditions", "exceptions")
                 },
-                "corrected": {"claim": audit.corrected},
+                "corrected": {
+                    "claim": audit.corrected, "scope": audit.corrected_scope,
+                    "conditions": audit.corrected_conditions, "exceptions": audit.corrected_exceptions,
+                },
             },
             "messages": [{"role": message.type, "content": message.content} for message in messages],
         }
@@ -207,6 +215,8 @@ def freeze(
         "kind": "frozen", "corpus_sha256": corpus.sha256, "cases_sha256": cases_digest,
         "candidates_sha256": candidates_digest, "split": cases["split"], "origin": cases["origin"],
         "review_sha256": digest(canonical(review.model_dump(mode="json"))), "reviewer": review.reviewer,
+        "approval": "human_review",
+        "cost_viable_families": review.cost_viable_families,
         "prompt_version": PROBE_VERSION, "actor": actor.model_dump(mode="json"),
         "audits": [audit.model_dump(mode="json") for audit in audits.values()], "probes": list(frozen.values()),
     }
@@ -224,6 +234,8 @@ def probe_messages(case: dict, condition: str):
 async def probe(frozen: dict, frozen_digest: str, run: AnalysisRun | None) -> dict:
     if frozen["prompt_version"] != PROBE_VERSION:
         raise FeasibilityError("unsupported frozen probe prompt version")
+    if frozen.get("approval") != "human_review":
+        raise FeasibilityError("probe requires a human-approved frozen specification")
     if run and frozen["actor"] != run.settings.model_dump(mode="json"):
         raise FeasibilityError("probe actor configuration must match the frozen specification")
     results = []

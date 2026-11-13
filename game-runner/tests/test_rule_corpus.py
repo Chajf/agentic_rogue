@@ -75,3 +75,23 @@ def test_bundle_rejects_cross_session_and_split_links(tmp_path):
     ])
     with pytest.raises(FeasibilityError, match="cross-session"):
         load(tmp_path, "development")
+
+
+def test_cli_reports_zero_opportunities_without_provider_configuration(tmp_path):
+    import subprocess
+    import sys
+
+    bundle = tmp_path / "corpus"
+    empty_bundle(bundle)
+    base = [sys.executable, "-m", "game_runner.rule_feasibility"]
+    common = ["--corpus", str(bundle), "--split", "development"]
+    cases, candidates, report, markdown = [tmp_path / name for name in ("cases.json", "candidates.json", "report.json", "report.md")]
+    subprocess.run(base + ["prepare", *common, "--origin", "natural", "--output", str(cases)], check=True)
+    subprocess.run(base + ["extract", *common, "--cases", str(cases), "--output", str(candidates)], check=True)
+    subprocess.run(base + ["report", *common, "--cases", str(cases), "--candidates", str(candidates),
+                           "--output", str(report), "--markdown", str(markdown)], check=True)
+    result = json.loads(report.read_text())
+    assert result["planned_trials"] == 1 and result["trial_counts"]["failed"] == 1
+    assert result["usage"]["extraction"]["calls"] == 0
+    assert {family["decision"] for family in result["families"].values()} == {"insufficient evidence"}
+    assert "Evidence origin **natural**" in markdown.read_text()

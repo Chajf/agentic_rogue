@@ -106,6 +106,9 @@ def _validate_links(corpus: Corpus) -> None:
                 raise FeasibilityError("action does not reference a valid decision call")
             if call["observation_event_id"] is None or call["observation_event_id"] >= event["id"]:
                 raise FeasibilityError("action input must precede the action event")
+            before = same_trial(events, call["observation_event_id"], event)
+            if before["observation"] is None or before["outcome"] not in {"succeeded", "uncertain"}:
+                raise FeasibilityError("action must link to an available input observation")
     for call in calls.values():
         if call["observation_event_id"] is not None:
             same_trial(events, call["observation_event_id"], call)
@@ -128,6 +131,14 @@ def _validate_links(corpus: Corpus) -> None:
 def prepare(corpus: Corpus, origin: Origin) -> dict:
     cases, exclusions = [], []
     screened = dict.fromkeys(FAMILIES, 0)
+    confirmed_outputs = {}
+    for event in sorted(corpus.events.values(), key=lambda event: event["id"]):
+        if (
+            event["observation"] is not None and event["outcome"] == "succeeded"
+            and event["model_call_id"] is not None
+        ):
+            call = corpus.calls[event["model_call_id"]]
+            confirmed_outputs.setdefault(call["observation_event_id"], event["id"])
     for trial_id, trial in corpus.trials.items():
         buckets = trial["screening_opportunities"]
         if set(buckets) != set(FAMILIES):
@@ -162,9 +173,14 @@ def prepare(corpus: Corpus, origin: Origin) -> dict:
                 )):
                     exclusions.append({**identity, "reason": "missing_or_uncertain_observation"})
                     continue
-                cases.append({
-                    **identity, "evidence_event_ids": [input_event["id"]] + ([anchor["id"]] if output_event else []),
-                })
+                evidence_ids = [input_event["id"]]
+                if output_event:
+                    evidence_ids.append(output_event["id"])
+                elif input_event["id"] in confirmed_outputs:
+                    # Rest screening is anchored at the decision opportunity,
+                    # which can precede invalid retries and the accepted action.
+                    evidence_ids.append(confirmed_outputs[input_event["id"]])
+                cases.append({**identity, "evidence_event_ids": evidence_ids})
     return {
         "kind": "cases", "corpus_sha256": corpus.sha256, "series_id": corpus.series_id,
         "split": corpus.manifest.split, "origin": origin,

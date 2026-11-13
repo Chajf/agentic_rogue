@@ -70,6 +70,7 @@ async def prepare_review(path: Path):
         "evidential_support": "refuted", "scope": "too_broad", "applicability": "conditional",
         "utility": "mixed", "rationale": "The fixture supports a narrower rule.",
         "original": CANDIDATE["claim"], "corrected": "Wait only under the original conditions.",
+        "corrected_scope": "conditional",
         "counterevidence_event_ids": [12],
     } for candidate in candidates["candidates"]]
     review = {
@@ -128,3 +129,78 @@ async def test_rejects_unapproved_reviews_future_evidence_and_partial_call_budge
 def test_candidate_cannot_cite_an_event_outside_the_supplied_case():
     with pytest.raises(FeasibilityError, match="outside"):
         validate_candidate({**CANDIDATE, "counterevidence_event_ids": [99]}, {"evidence_event_ids": [1]})
+
+
+async def test_reports_paired_changes_losses_and_unchanged_without_game_access(scripted_bundle, monkeypatch, tmp_path):
+    from game_runner.clients.rogue import RogueClient
+    from game_runner.persistence import database
+    from game_runner.rule_feasibility.artifacts import write_artifact
+    from game_runner.rule_feasibility.report import checked_results, summarize, write_markdown
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("offline analysis accessed gameplay")
+
+    monkeypatch.setattr(RogueClient, "__init__", unexpected)
+    monkeypatch.setattr(database, "connect", unexpected)
+    corpus, cases, candidates, review = await prepare_review(scripted_bundle)
+    frozen = freeze(corpus, cases, "cases-sha", candidates, "candidates-sha", review, SETTINGS)
+    responses = [action_reply(action) for sequence in (
+        [UP, REST, UP], [UP, UP, REST], [UP, UP, UP],
+        [UP, UP, UP], [UP, UP, UP], [UP, UP, UP],
+    ) for action in sequence]
+    run = AnalysisRun(FakeModel(*responses), SETTINGS, 18, 10)
+    result = await probe(frozen, "frozen-sha", run)
+    groups = checked_results(frozen, "frozen-sha", result)
+    summary = summarize(cases, candidates, frozen, groups, run.calls)
+    movement = summary["families"]["ambiguous_movement"]["paired_counts"]
+    assert (movement["changed"], movement["harmful_choices_avoided"], movement["appropriate_recommendations_lost"]) == (2, 1, 1)
+    assert summary["families"]["conditional_rest"]["paired_counts"]["unchanged"] == 2
+    assert {family["decision"] for family in summary["families"].values()} == {"insufficient evidence"}
+    for name in ("first", "second"):
+        write_artifact(tmp_path / f"{name}.json", summary)
+        write_markdown(tmp_path / f"{name}.md", summary)
+    assert (tmp_path / "first.json").read_bytes() == (tmp_path / "second.json").read_bytes()
+    assert (tmp_path / "first.md").read_bytes() == (tmp_path / "second.md").read_bytes()
+
+
+async def test_cli_freeze_probe_and_report_share_the_exact_frozen_artifacts(scripted_bundle, monkeypatch, tmp_path):
+    import sys
+
+    from game_runner.rule_feasibility import __main__ as cli
+    from game_runner.rule_feasibility.artifacts import canonical, digest, write_artifact
+
+    corpus, cases, candidates, review = await prepare_review(scripted_bundle)
+    cases_path, drafts_path, review_path, actor_path, frozen_path, results_path, report_path = [
+        tmp_path / name for name in ("cases.json", "drafts.json", "review.json", "actor.json",
+                                     "frozen.json", "probes.json", "report.json")
+    ]
+    cases_sha = write_artifact(cases_path, cases)
+    candidate_sha = write_artifact(drafts_path, {**candidates, "cases_sha256": cases_sha})
+    review_path.write_bytes(canonical({**review, "candidates_sha256": candidate_sha}))
+    actor_path.write_bytes(canonical(SETTINGS.model_dump(mode="json")))
+
+    def command(*args):
+        monkeypatch.setattr(sys, "argv", ["rule_feasibility", *map(str, args)])
+        _, namespace = cli._arguments()
+        return cli._execute(namespace)
+
+    common = ("--corpus", scripted_bundle, "--split", "development", "--cases", cases_path,
+              "--candidates", drafts_path)
+    frozen_sha = command("freeze", *common, "--review", review_path, "--model-config", actor_path,
+                         "--output", frozen_path)
+    assert digest(frozen_path.read_bytes()) == frozen_sha
+    assert frozen_path.with_suffix(".json.sha256").read_text().strip() == frozen_sha
+
+    # Invoke the async CLI from outside this test's event loop.
+    import asyncio
+    monkeypatch.setattr(cli, "provider", lambda _: FakeModel(*([action_reply(UP)] * 18)))
+    args = ("probe", "--frozen", frozen_path, "--max-calls", "18", "--seconds", "10", "--output", results_path)
+    await asyncio.to_thread(command, *args)
+    command("report", *common, "--frozen", frozen_path, "--results", results_path, "--output", report_path)
+    result = json.loads(report_path.read_bytes())
+    assert result["usage"]["probes"]["calls"] == 18
+    assert result["corpus_sha256"] == corpus.sha256
+    frozen_path.write_bytes(frozen_path.read_bytes() + b" ")
+    with pytest.raises(FeasibilityError, match="checksum"):
+        command("report", *common, "--frozen", frozen_path, "--results", results_path,
+                "--output", tmp_path / "second-report.json")
