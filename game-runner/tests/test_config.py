@@ -51,3 +51,29 @@ def test_history_recent_interactions_rejects_invalid_values(model_env, monkeypat
     monkeypatch.setenv("HISTORY_RECENT_INTERACTIONS", value)
     with pytest.raises(ValueError, match="HISTORY_RECENT_INTERACTIONS"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize("policy", ["history_only", "working_memory"])
+def test_context_policy_and_summary_limits(model_env, monkeypatch, policy):
+    monkeypatch.setenv("CONTEXT_POLICY", policy)
+    monkeypatch.setenv("SUMMARY_CONTEXT_TOKEN_BUDGET", "4096")
+    monkeypatch.setenv("SUMMARY_OUTPUT_TOKENS", "750")
+    monkeypatch.setenv("MAX_SUMMARY_ATTEMPTS", "1")
+    monkeypatch.setenv("MODEL_KWARGS", '{"max_completion_tokens":700}')
+    settings = Settings.from_env()
+    assert settings.context_policy == policy
+    assert settings.summary_context_token_budget == 4096
+    assert settings.summary_output_tokens == 750
+    assert settings.max_summary_attempts == 1
+    assert settings.actor_output_tokens == 700
+
+
+@pytest.mark.parametrize("key,value", [
+    ("CONTEXT_POLICY", "other"), ("SUMMARY_OUTPUT_TOKENS", "0"),
+    ("SUMMARY_CONTEXT_TOKEN_BUDGET", "512"), ("MAX_SUMMARY_ATTEMPTS", "0"),
+    ("MODEL_KWARGS", '{"max_tokens":false}'),
+])
+def test_rejects_invalid_context_settings(model_env, monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError, match=key):
+        Settings.from_env()

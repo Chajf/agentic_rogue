@@ -20,6 +20,26 @@ class Settings:
     context_token_budget: int
     model_kwargs: dict[str, Any] = field(default_factory=dict)
     history_recent_interactions: int = 8
+    context_policy: str = "history_only"
+    summary_context_token_budget: int = 8192
+    summary_output_tokens: int = 1024
+    max_summary_attempts: int = 2
+
+    def __post_init__(self) -> None:
+        if self.context_policy not in {"history_only", "working_memory"}:
+            raise ValueError("CONTEXT_POLICY must be history_only or working_memory")
+        if self.summary_output_tokens <= 0 or self.summary_context_token_budget <= self.summary_output_tokens:
+            raise ValueError("SUMMARY_CONTEXT_TOKEN_BUDGET must exceed positive SUMMARY_OUTPUT_TOKENS")
+        if self.max_summary_attempts <= 0:
+            raise ValueError("MAX_SUMMARY_ATTEMPTS must be positive")
+        _ = self.actor_output_tokens
+
+    @property
+    def actor_output_tokens(self) -> int:
+        caps = [self.model_kwargs[key] for key in ("max_tokens", "max_completion_tokens") if key in self.model_kwargs]
+        if len(caps) > 1 or (caps and (type(caps[0]) is not int or caps[0] <= 0)):
+            raise ValueError("MODEL_KWARGS requires a single positive integer output cap")
+        return caps[0] if caps else 512
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -51,6 +71,10 @@ class Settings:
             context_token_budget=int(os.getenv("CONTEXT_TOKEN_BUDGET", "8192")),
             model_kwargs=model_kwargs,
             history_recent_interactions=history_recent_interactions,
+            context_policy=os.getenv("CONTEXT_POLICY", "history_only"),
+            summary_context_token_budget=int(os.getenv("SUMMARY_CONTEXT_TOKEN_BUDGET", "8192")),
+            summary_output_tokens=int(os.getenv("SUMMARY_OUTPUT_TOKENS", "1024")),
+            max_summary_attempts=int(os.getenv("MAX_SUMMARY_ATTEMPTS", "2")),
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

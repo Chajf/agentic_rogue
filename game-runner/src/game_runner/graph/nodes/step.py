@@ -1,18 +1,20 @@
 """Nodes in the one-action Rogue agent graph."""
 
-import json
-import re
+from dataclasses import asdict
 import time
 from typing import Annotated
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from game_runner.clients.rogue import (
     ActionRequest, KeyActionRequest, RogueAPIError, RogueClient, RogueTransportError,
 )
-from game_runner.context.messages import build_messages
+from game_runner.context.budget import ContextLimitError, RETRY_RESERVE, count_messages
+from game_runner.context.compaction import decode_json
+from game_runner.context.planning import ContextPlanner, ContextSettings
+from game_runner.context.progress import Progress
 from game_runner.graph.state import StepState
 from game_runner.persistence.repository import GameRepository
 
@@ -54,26 +56,33 @@ def validate_mode(decision: Decision, mode: str) -> None:
 
 def make_nodes(
     model: BaseChatModel, client: RogueClient, repository: GameRepository,
-    *, context_token_budget: int, max_model_calls: int, history_recent_interactions: int,
+    *, context_settings: ContextSettings, max_model_calls: int, summary_model=None,
 ):
-    def context(state: StepState) -> dict:
-        history = repository.recent_transitions(
-            state["session_id"], state["observation_event_id"], history_recent_interactions,
+    planner = ContextPlanner(model, repository, context_settings, summary_model)
+
+    async def context(state: StepState) -> dict:
+        observation, event_id = state["observation"], state["observation_event_id"]
+        progress = state.get("progress") or Progress.initial(event_id, observation)
+        prepared = await planner.prepare(
+            state["session_id"], observation, event_id, state["observation_outcome"], progress,
         )
         return {
-            "messages": build_messages(
-                state["observation"], history, context_token_budget,
-                observation_outcome=state["observation_outcome"],
-            ),
+            "messages": prepared.messages, "base_messages": prepared.messages,
+            "memory_revision_id": prepared.revision_id, "progress": progress,
             "attempts": 0,
             "action": None,
         }
 
     async def invoke_model(state: StepState) -> dict:
         messages: list[BaseMessage] = state["messages"]
+        count = count_messages(model, messages)
+        if count.count + context_settings.actor_output_tokens > context_settings.token_budget:
+            raise ContextLimitError("actor request and reserved output exceed context budget")
         input_messages = [{"role": message.type, "content": message.content} for message in messages]
         call_id = repository.start_model_call(
             state["session_id"], input_messages, observation_event_id=state["observation_event_id"],
+            memory_revision_id=state["memory_revision_id"],
+            input_token_count=count.count, input_token_count_method=count.method,
         )
         started = time.monotonic()
         try:
@@ -100,18 +109,9 @@ def make_nodes(
         error: str | None = None
         decision: Decision | None = None
         try:
-            if not isinstance(response.content, str):
-                raise ValueError("model content must be a JSON string")
-            content = response.content.strip()
-            fenced = re.fullmatch(
-                r"(?P<fence>`{3,})(?:json)?\s*(?P<body>.*?)\s*(?P=fence)",
-                content, flags=re.DOTALL | re.IGNORECASE,
-            )
-            if fenced:
-                content = fenced.group("body")
-            decision = Decision.model_validate(json.loads(content))
+            decision = Decision.model_validate(decode_json(response.content))
             validate_mode(decision, state["observation"].mode)
-        except (ValueError, ValidationError) as exc:
+        except ValueError as exc:
             error = str(exc)
         repository.finish_model_call(
             state["call_id"], "invalid" if error else "valid",
@@ -126,13 +126,16 @@ def make_nodes(
         if error:
             if state["attempts"] >= max_model_calls:
                 raise DecisionValidationError(f"model response invalid after {max_model_calls} attempts: {error}")
-            return {
-                "action": None,
-                "messages": [
-                    *state["messages"], response,
-                    HumanMessage(content=f"Invalid action response: {error}. Return one valid JSON object only."),
-                ],
-            }
+            # Keep retry feedback bounded. The complete rejected reply remains
+            # in the audit record and cannot grow the next request.
+            base = state["base_messages"]
+            feedback = "The previous response failed validation. Return one valid JSON object only."
+            if _fits_retry(model, base, feedback + " " + error):
+                feedback += " " + error
+            retry = [*base[:-1], HumanMessage(content=base[-1].content + "\n" + feedback)]
+            if not _fits_retry(model, base, feedback):
+                raise ContextLimitError("actor correction exceeds retry reserve")
+            return {"action": None, "messages": retry}
         assert decision is not None
         return {"action": decision.action, "rationale": decision.rationale}
 
@@ -162,25 +165,36 @@ def make_nodes(
                     error=f"{exc}; episode or step mismatch during reconciliation",
                 )
                 raise SessionInterrupted("action outcome cannot be confirmed") from exc
+            progress = state["progress"].advance(event_id, before, action_payload, recovered, recovered=True)
             repository.finish_game_event(
                 event_id, "uncertain", api_step=recovered.api_step,
                 observation=recovered.model_dump(mode="json"),
+                progress=asdict(progress),
                 error=f"{exc}; state recovered but action output was lost",
             )
             return {
                 "next_observation": recovered, "next_observation_event_id": event_id,
                 "next_observation_outcome": "uncertain",
+                "next_progress": progress,
             }
         except Exception as exc:
             repository.finish_game_event(event_id, "uncertain", error=str(exc))
             raise
+        progress = state["progress"].advance(event_id, before, action_payload, observed, recovered=False)
         repository.finish_game_event(
             event_id, "succeeded", api_step=observed.api_step,
             http_status=200, observation=observed.model_dump(mode="json"),
+            progress=asdict(progress),
         )
         return {
             "next_observation": observed, "next_observation_event_id": event_id,
             "next_observation_outcome": "succeeded",
+            "next_progress": progress,
         }
 
     return context, invoke_model, validate, perform_action
+
+
+def _fits_retry(model, base: list[BaseMessage], feedback: str) -> bool:
+    corrected = [*base[:-1], HumanMessage(content=base[-1].content + "\n" + feedback)]
+    return count_messages(model, corrected).count - count_messages(model, base).count <= RETRY_RESERVE

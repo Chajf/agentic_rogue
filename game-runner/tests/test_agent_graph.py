@@ -6,6 +6,8 @@ from langchain_core.messages import AIMessage
 
 from game_runner.clients.rogue import Observation, RogueAPIError, RogueTransportError
 from game_runner.context.messages import build_messages
+from game_runner.context.budget import count_messages
+from game_runner.context.planning import _fit_recent
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import Decision, DecisionValidationError, SessionInterrupted, validate_mode
 from game_runner.config import Settings
@@ -73,19 +75,21 @@ class FakeRepository:
     def interrupt_open_sessions(self):
         self.interrupted_old_sessions = True
 
-    def create_session(self, session_id, model_name, prompt_version):
+    def create_session(self, session_id, model_name, prompt_version, *, context_policy):
         self.session_id = session_id
         self.model_name = model_name
         self.prompt_version = prompt_version
+        self.context_policy = context_policy
 
     def update_session(self, session_id, status, **kwargs):
         self.session_status = status
         self.session_details = kwargs
 
-    def start_model_call(self, session_id, input_messages, *, observation_event_id):
+    def start_model_call(self, session_id, input_messages, *, observation_event_id, **kwargs):
         self.calls.append({
             "session_id": session_id, "input_messages": input_messages,
             "observation_event_id": observation_event_id,
+            **kwargs,
         })
         return len(self.calls)
 
@@ -274,7 +278,7 @@ def test_context_preserves_order_and_drops_whole_oldest_pairs() -> None:
         DecisionTransition(1, reset, "succeeded", 1, rest, "Wait.", 2, after_rest, "succeeded"),
         DecisionTransition(2, after_rest, "succeeded", 2, search, "Look.", 3, current, "succeeded"),
     ]
-    messages = build_messages(current, history, 8192)
+    messages = build_messages(current, history)
     assert [message.type for message in messages] == ["system", "human", "ai", "human", "ai", "human"]
     assert "Welcome." in messages[1].content
     assert json.loads(messages[2].content) == {"action": rest, "rationale": "Wait."}
@@ -286,9 +290,11 @@ def test_context_preserves_order_and_drops_whole_oldest_pairs() -> None:
     assert "OLD REST SCREEN" not in combined
     assert combined.count("@  .  \n   %  ") == 1
     recent_only = [messages[0], *messages[3:]]
-    budget = (sum(len(message.content) for message in recent_only) + 4) // 3
-    assert build_messages(current, history, budget) == recent_only
-    assert build_messages(current, history, 1) == [messages[0], messages[-1]]
+    budget = count_messages(None, recent_only).count
+    assert _fit_recent(
+        history, lambda selected: build_messages(current, selected),
+        lambda rendered: count_messages(None, rendered).count <= budget,
+    ) == recent_only
 
 
 def test_selection_mode_accepts_only_matching_key() -> None:
@@ -343,7 +349,8 @@ async def test_runner_replays_only_completed_decisions_after_recovery(monkeypatc
     assert [call["observation_event_id"] for call in repository.calls] == [1, 1, 2, 3, 4, 5]
     assert [event.get("model_call_id") for event in repository.events] == [None, 2, 3, 4, 5, 6]
     assert [query[2] for query in repository.history_queries] == [history_limit] * 5
-    assert repository.prompt_version == "rogue-v1.2"
+    assert repository.prompt_version == "rogue-v1.3"
+    assert repository.context_policy == "history_only"
     for call, messages in zip(repository.calls, model.inputs, strict=True):
         assert call["input_messages"] == [
             {"role": message.type, "content": message.content} for message in messages
@@ -396,7 +403,7 @@ async def test_runner_stops_after_terminal_observation(monkeypatch, initialize_m
     assert initialized == ([("test-model", {
         "model_provider": "openai", "base_url": "http://localhost:8080/v1",
         "api_key": "local", "timeout": 120, "max_retries": 0,
-        "temperature": 0.7, "extra_body": {"top_k": 40},
+        "temperature": 0.7, "extra_body": {"top_k": 40}, "max_tokens": 512,
     })] if initialize_model else [])
 
     assert status == repository.session_status == "dead"

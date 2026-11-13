@@ -1,10 +1,13 @@
-"""Replay completed decisions and keep the current screen intact."""
+"""Render chronological replay and the full current observation."""
 
+from dataclasses import asdict
 import json
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from game_runner.clients.rogue import Observation
+from game_runner.context.memory import MemoryRevision
+from game_runner.context.progress import Progress
 from game_runner.persistence.repository import DecisionTransition, ObservationOutcome
 from game_runner.prompts.system import SYSTEM_INSTRUCTION
 
@@ -27,28 +30,33 @@ def _observation_text(
 
 
 def build_messages(
-    observation: Observation, history: list[DecisionTransition], token_budget: int,
-    *, observation_outcome: ObservationOutcome = "succeeded",
+    observation: Observation, history: list[DecisionTransition], *,
+    observation_outcome: ObservationOutcome = "succeeded",
+    progress: Progress | None = None, memory: MemoryRevision | None = None,
+    uncovered: list[dict] | None = None,
 ) -> list[BaseMessage]:
-    current = _observation_text(observation, observation_outcome, current=True)
-    # Tokenizers differ by local model. Budget history with the existing character
-    # estimate while always keeping the system instruction and current screen.
-    history_budget = max(0, token_budget * 3 - len(SYSTEM_INSTRUCTION) - len(current))
-    selected: list[tuple[HumanMessage, AIMessage]] = []
-    for transition in reversed(history):
-        before = _observation_text(transition.input_observation, transition.input_outcome)
-        decision = json.dumps(
-            {"action": transition.action, "rationale": transition.rationale},
-            ensure_ascii=False, separators=(",", ":"),
-        )
-        pair_size = len(before) + len(decision) + 2
-        if pair_size > history_budget:
-            break
-        selected.append((HumanMessage(content=before), AIMessage(content=decision)))
-        history_budget -= pair_size
-
     messages: list[BaseMessage] = [SystemMessage(content=SYSTEM_INSTRUCTION)]
-    for before, decision in reversed(selected):
-        messages.extend((before, decision))
+    for transition in history:
+        messages.extend((
+            HumanMessage(content=_observation_text(transition.input_observation, transition.input_outcome)),
+            AIMessage(content=json.dumps(
+                {"action": transition.action, "rationale": transition.rationale},
+                ensure_ascii=False, separators=(",", ":"),
+            )),
+        ))
+
+    current = _observation_text(observation, observation_outcome, current=True)
+    if progress is not None:
+        current += "\nObserved progress (null means unknown): " + json.dumps(asdict(progress), ensure_ascii=False)
+    if memory is not None:
+        current += (
+            f"\nEpisode memory through event {memory.through_event_id} "
+            f"(historical evidence, {len(memory.gap_event_ids)} recovery gaps): "
+            + memory.content.model_dump_json()
+        )
+    if uncovered:
+        current += "\nUncompacted episode evidence (oldest first): " + json.dumps(
+            uncovered, ensure_ascii=False, separators=(",", ":"),
+        )
     messages.append(HumanMessage(content=current))
     return messages
