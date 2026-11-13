@@ -1,5 +1,6 @@
 """Summarize only newly covered episode evidence and publish valid revisions."""
 
+from collections.abc import Callable
 from dataclasses import asdict
 import json
 import re
@@ -59,10 +60,11 @@ def evidence_rows(trace: list[DecisionTransition]) -> list[dict]:
             rows.append({
                 "input_event_id": transition.input_event_id,
                 "before": {"mode": before.mode, "stats": before.state.model_dump(exclude_none=True),
-                           "messages": before.messages},
+                           "messages": before.messages, "provenance": transition.input_outcome},
                 "output_event_id": transition.output_event_id, "api_step": after.api_step,
                 "status": after.status, "mode": after.mode, "action": transition.action,
-                "stated_rationale": transition.rationale, "observed": asdict(progress),
+                "stated_rationale": transition.rationale,
+                "observed": transition.progress if transition.progress is not None else asdict(progress),
             })
     return rows
 
@@ -94,7 +96,7 @@ def summary_messages(previous: MemoryRevision | None, rows: list[dict], correcti
 async def compact_batch(
     model, repository: GameRepository, session_id: UUID, episode_id: UUID,
     previous: MemoryRevision | None, trace: list[DecisionTransition], rows: list[dict],
-    *, token_budget: int, output_tokens: int, attempts: int,
+    *, token_budget: int, output_tokens: int, attempts: int, fits_actor: Callable[[MemoryRevision], bool],
 ) -> MemoryRevision:
     boundary = trace[-1].output_event_id
     allowed, gaps = evidence_ids(trace)
@@ -130,13 +132,15 @@ async def compact_batch(
         try:
             memory = EpisodeMemory.model_validate(decode_json(response.content))
             memory.check_sources(allowed, gaps)
+            if not fits_actor(MemoryRevision(0, boundary, memory, frozenset(gaps))):
+                raise ValueError("summary is too long for the actor context budget")
         except ValueError as exc:
             repository.finish_model_call(
                 call_id, "invalid", raw_response=raw, validation_error=str(exc),
                 response_metadata=raw.get("response_metadata"),
                 usage_metadata=raw.get("usage_metadata"), duration_ms=duration_ms,
             )
-            correction = "\nPrevious output failed schema or source validation. Return corrected JSON."
+            correction = "\nPrevious output was invalid or too long. Return concise, correctly cited JSON."
             continue
         try:
             return repository.publish_memory(

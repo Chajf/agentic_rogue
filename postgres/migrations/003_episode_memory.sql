@@ -33,3 +33,6 @@ ALTER TABLE model_calls
     ADD COLUMN memory_revision_id bigint,
     ADD CONSTRAINT model_calls_memory_revision_fk
         FOREIGN KEY (session_id, memory_revision_id) REFERENCES episode_memory_revisions(session_id, id);
+
+ALTER TABLE game_events
+    ADD COLUMN progress jsonb CHECK (jsonb_typeof(progress) = 'object');

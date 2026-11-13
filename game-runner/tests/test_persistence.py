@@ -247,3 +247,96 @@ def test_p2_migrates_p1_data_and_serializes_revision_publication(isolated_databa
         assert connection.execute(
             "SELECT status FROM model_calls WHERE id = ANY(%s) ORDER BY id", (calls,),
         ).fetchall() == [("valid",), ("valid",)]
+
+
+@pytest.mark.parametrize("policy", ["history_only", "working_memory"])
+async def test_runner_persists_policy_context_and_two_compactions(isolated_database, monkeypatch, policy):
+    import json
+
+    from game_runner.config import Settings
+    from game_runner.session import run_session
+
+    from test_agent_graph import FakeClient, FakeModel, observed
+
+    migrate.main()
+    episode = uuid4()
+    screen = ["", "|@.|", "---", "Level: 1"]
+
+    class EpisodeClient(FakeClient):
+        initial = observed(episode, message="", screen=screen).model_copy(update={"messages": []})
+
+        async def action(self, episode_id, action):
+            self.actions.append(action)
+            step = len(self.actions)
+            if step == 3:
+                from game_runner.clients.rogue import RogueTransportError
+                raise RogueTransportError("timeout")
+            return self.initial.model_copy(update={"api_step": step})
+
+        async def observe(self):
+            return self.initial.model_copy(update={"api_step": 3})
+
+    class Summarizer:
+        def __init__(self):
+            self.inputs = []
+
+        async def ainvoke(self, messages):
+            from langchain_core.messages import AIMessage
+
+            self.inputs.append(messages)
+            assert len(client.actions) in (3, 6)
+            request, _ = json.JSONDecoder().raw_decode(messages[-1].content)
+            batch = request["new_trace"]
+            memory = request["previous"] or {
+                "observations": [], "goals": [], "unsuccessful_attempts": [],
+                "hypotheses": [], "uncertainties": [],
+            }
+            if len(self.inputs) == 1:
+                memory["observations"] = [{"text": "Future evidence", "source_event_ids": [123456]}]
+            else:
+                memory["observations"] = [{"text": "Observed initial play", "source_event_ids": [2]}]
+                memory["uncertainties"] = [
+                    {"text": entry["gap"], "source_event_ids": [entry["output_event_id"]]}
+                    for entry in batch if "gap" in entry
+                ] or memory["uncertainties"]
+            return AIMessage(content=json.dumps(memory))
+
+    actor = FakeModel(*[json.dumps({"action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore."})] * 7)
+    client = EpisodeClient(None)
+    summarizer = Summarizer()
+    monkeypatch.setattr("game_runner.session.RogueClient", lambda *_: client)
+    settings = Settings(
+        "http://test", 10, "http://unused", "fake", "local", 5, 12345, 7, 2, 8192,
+        history_recent_interactions=2, context_policy=policy,
+    )
+    assert await run_session(settings, GameRepository(), actor, summary_model=summarizer) == "limit_reached"
+    assert len(client.actions) == 7
+    with isolated_database() as connection:
+        calls = connection.execute(
+            "SELECT purpose, observation_event_id, memory_revision_id, status, input_messages, "
+            "input_token_count_method FROM model_calls ORDER BY id",
+        ).fetchall()
+        revisions = connection.execute(
+            "SELECT id, through_event_id, previous_revision_id, gap_event_ids FROM episode_memory_revisions ORDER BY id",
+        ).fetchall()
+        assert connection.execute("SELECT context_policy FROM game_sessions").fetchone() == (policy,)
+        assert connection.execute(
+            "SELECT (progress->>'no_movement_streak')::int FROM game_events ORDER BY id",
+        ).fetchall() == [(0,), (1,), (2,), (0,), (1,), (2,), (3,), (4,)]
+    decisions = [call for call in calls if call[0] == "decision"]
+    summaries = [call for call in calls if call[0] == "episode_summary"]
+    assert [call[1] for call in decisions] == list(range(1, 8))
+    assert all(call[-1] == "utf8_byte_estimate" for call in calls)
+    for decision, messages in zip(decisions, actor.inputs, strict=True):
+        assert decision[4] == [{"role": msg.type, "content": msg.content} for msg in messages]
+    if policy == "history_only":
+        assert summaries == revisions == []
+        assert all(call[2] is None for call in decisions)
+    else:
+        assert [(call[1], call[3]) for call in summaries] == [(4, "invalid"), (4, "valid"), (6, "valid")]
+        assert [[row["output_event_id"] for row in json.JSONDecoder().raw_decode(messages[-1].content)[0]["new_trace"]]
+                for messages in summarizer.inputs] == [[2, 3, 4], [2, 3, 4], [5, 6]]
+        assert [revision[1:] for revision in revisions] == [(4, None, [4]), (6, revisions[0][0], [4])]
+        assert decisions[3][2] == revisions[0][0]
+        assert decisions[-1][2] == revisions[-1][0]
+        assert "1 recovery gaps" in actor.inputs[-1][-1].content

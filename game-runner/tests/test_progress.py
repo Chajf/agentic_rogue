@@ -46,6 +46,7 @@ def test_inventory_slot_provenance_and_freshness_and_new_map():
     assert progress.inventory.slots == (("a", "Some food"),)
     assert progress.inventory.event_id == 2
     assert not progress.inventory.stale
+    assert progress.position is None
     stepped = base.model_copy(update={"state": base.state.model_copy(update={"dungeon_level": 2, "hp": 9})})
     advanced = progress.advance(3, listing, {"type": "semantic", "action": "DESCEND"}, stepped, recovered=False)
     assert advanced.inventory == replace(progress.inventory, stale=True)

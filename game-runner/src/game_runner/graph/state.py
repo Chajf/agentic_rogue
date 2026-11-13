@@ -6,6 +6,7 @@ from uuid import UUID
 from langchain_core.messages import AIMessage, BaseMessage
 
 from game_runner.clients.rogue import ActionRequest, KeyActionRequest, Observation
+from game_runner.context.progress import Progress
 from game_runner.persistence.repository import ObservationOutcome
 
 
@@ -16,6 +17,9 @@ class StepState(TypedDict):
     observation_outcome: ObservationOutcome
     attempts: int
     messages: NotRequired[list[BaseMessage]]
+    base_messages: NotRequired[list[BaseMessage]]
+    memory_revision_id: NotRequired[int | None]
+    progress: NotRequired[Progress]
     response: NotRequired[AIMessage]
     call_id: NotRequired[int]
     duration_ms: NotRequired[int]
@@ -24,3 +28,4 @@ class StepState(TypedDict):
     next_observation: NotRequired[Observation]
     next_observation_event_id: NotRequired[int]
     next_observation_outcome: NotRequired[ObservationOutcome]
+    next_progress: NotRequired[Progress]

@@ -87,11 +87,17 @@ class Progress:
         # positions only between adjacent unambiguous map observations.
         name = action.get("action")
         key = action.get("key")
+        explicit_inventory = before.mode == "normal" and (name == "INVENTORY" or key == "i")
+        if explicit_inventory:
+            position = None
         transition_unknown = level is None and (name in {"ASCEND", "DESCEND"} or key in {"<", ">"})
         previous_level = self.map_level
         map_changed = recovered or transition_unknown or (
             previous_level is not None and level is not None and previous_level != level
-        ) or any("trap door" in msg.lower() for msg in after.messages)
+        ) or any(
+            "you fell into a trap!" in msg.lower() or "trap door" in msg.lower()
+            for msg in after.messages
+        )
         map_id = None if map_changed else self.map_event_id
         if map_id is None and position is not None:
             map_id = event_id
@@ -113,12 +119,11 @@ class Progress:
         # when the player glyph stayed at the same coordinates.
         quiet = messages is not None and not messages and not any(
             delta and delta[0] != delta[1] for delta in stats_delta
-        )
+        ) and before.state == after.state
         no_movement = direction is not None and position_change == "same" and quiet
         streak = (self.no_movement_streak if self.direction == direction else 0) + 1 if no_movement else 0
 
         inventory = self.inventory
-        explicit_inventory = before.mode == "normal" and (name == "INVENTORY" or key == "i")
         slots = {
             match[1]: match[2] for line in [*after.messages, *after.screen]
             if (match := SLOT.fullmatch(line))
