@@ -66,8 +66,7 @@ class RogueEnv:
             )
             self.process = self._new_process()
             try:
-                output = await self.process.start(self.seed)
-                self.terminal.feed(output)
+                output = await self.process.start(self.seed, self.terminal.feed_initial_screen)
                 output, page_messages = await self._consume_more(output)
                 final_message = self.terminal.message()
                 if final_message:

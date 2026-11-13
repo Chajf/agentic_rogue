@@ -1,5 +1,6 @@
 """Terminal reconstruction and observation parsing."""
 
+import codecs
 import re
 
 import pyte
@@ -38,9 +39,14 @@ class TerminalObserver:
         self.rows = rows
         self.screen = RogueScreen(columns, rows)
         self.stream = RogueStream(self.screen)
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def feed(self, output: bytes) -> None:
-        self.stream.feed(output.decode("utf-8", errors="replace"))
+        self.stream.feed(self.decoder.decode(output))
+
+    def feed_initial_screen(self, output: bytes) -> bool:
+        self.feed(output)
+        return self.state().dungeon_level is not None or self.mode() is InteractionMode.MORE
 
     def display(self) -> list[str]:
         return [line[: self.columns].ljust(self.columns) for line in self.screen.display[: self.rows]]

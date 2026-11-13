@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import sys
 import tempfile
 
 import pytest
@@ -10,6 +11,45 @@ from rogue_api.models import SemanticAction, SemanticActionRequest
 
 
 ROGUE_BINARY = os.environ.get("TEST_ROGUE_BINARY")
+
+
+@pytest.mark.parametrize("draw_screen", [True, False], ids=["delayed-screen", "startup-timeout"])
+async def test_reset_waits_for_initial_screen(tmp_path, draw_screen) -> None:
+    greeting = b"Hello rogo-agent, just a moment while I dig the dungeon #12345..."
+    screen = b"\x1b[2J\x1b[H\x1b[2;1H@\x1b[24;1HLevel: 1 Gold: 0 Hp: 12(12) Str: 16(16) Arm: 4 Exp: 1/0"
+    binary = tmp_path / "rogue"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import sys, time\n"
+        f"sys.stdout.buffer.write({greeting!r})\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(0.2)\n"
+        f"sys.stdout.buffer.write({screen if draw_screen else b''!r})\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(10)\n"
+    )
+    binary.chmod(0o700)
+    environment = RogueEnv(Settings(
+        rogue_binary=binary,
+        data_dir=tmp_path,
+        quiet_window_seconds=0.025,
+        action_timeout_seconds=3.0 if draw_screen else 0.5,
+    ))
+    try:
+        observation = await environment.reset(12345)
+        if draw_screen:
+            assert observation.status == "running", observation.error
+            assert observation.api_step == 0
+            assert observation.state.dungeon_level == 1
+            assert observation.screen[1].startswith("@")
+            assert observation.raw_output == (greeting + screen).decode()
+        else:
+            assert observation.status == "error"
+            assert observation.terminated
+            assert "did not draw its initial screen" in observation.error
+            assert not environment.process_running
+    finally:
+        await environment.close()
 
 
 @pytest.mark.skipif(not ROGUE_BINARY, reason="TEST_ROGUE_BINARY is not set")
