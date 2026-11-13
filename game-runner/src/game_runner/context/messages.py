@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from game_runner.clients.rogue import Observation
 from game_runner.context.memory import MemoryRevision
 from game_runner.context.progress import Progress
-from game_runner.persistence.repository import DecisionTransition, ObservationOutcome
+from game_runner.context.transitions import DecisionTransition, ObservationOutcome
 from game_runner.prompts.system import SYSTEM_INSTRUCTION
 
 

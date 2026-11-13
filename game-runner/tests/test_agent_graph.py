@@ -9,7 +9,8 @@ from game_runner.context.messages import build_messages
 from game_runner.context.budget import count_messages
 from game_runner.context.planning import _fit_recent
 from game_runner.graph.builder import build_graph
-from game_runner.graph.nodes.step import Decision, DecisionValidationError, SessionInterrupted, validate_mode
+from game_runner.decision import Decision, validate_mode
+from game_runner.graph.nodes.step import DecisionValidationError, SessionInterrupted
 from game_runner.config import Settings
 from game_runner.persistence.repository import DecisionTransition
 from game_runner.session import run_session

@@ -1,7 +1,5 @@
 """Write-ahead records for model calls and Rogue API requests."""
 
-from dataclasses import dataclass
-from typing import Literal
 from uuid import UUID
 
 from psycopg.rows import dict_row
@@ -10,24 +8,9 @@ from psycopg.types.json import Jsonb
 from game_runner.clients.rogue import Observation
 from game_runner.context.memory import EpisodeMemory, MemoryRevision, POLICY_VERSION, SCHEMA_VERSION
 
+from game_runner.context.transitions import DecisionTransition
+
 from .database import connect
-
-ObservationOutcome = Literal["succeeded", "uncertain"]
-
-
-@dataclass(frozen=True)
-class DecisionTransition:
-    input_event_id: int
-    input_observation: Observation
-    input_outcome: ObservationOutcome
-    model_call_id: int
-    action: dict
-    rationale: str
-    output_event_id: int
-    output_observation: Observation
-    output_outcome: ObservationOutcome
-    progress: dict | None = None
-
 
 class GameRepository:
     def create_session(

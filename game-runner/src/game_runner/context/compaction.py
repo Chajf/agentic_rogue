@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from dataclasses import asdict
 import json
-import re
 import time
 from uuid import UUID
 
@@ -13,7 +12,9 @@ from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.context.budget import ContextLimitError, count_messages
 from game_runner.context.memory import EpisodeMemory, MemoryRevision
 from game_runner.context.progress import Progress
-from game_runner.persistence.repository import DecisionTransition, GameRepository
+from game_runner.responses import decode_json
+from game_runner.context.transitions import DecisionTransition
+from game_runner.persistence.repository import GameRepository
 
 SUMMARY_INSTRUCTION = """Maintain a bounded summary for one Rogue episode. Return a JSON object with
 arrays observations, goals, unsuccessful_attempts, hypotheses and uncertainties. Each entry has
@@ -27,17 +28,6 @@ SUMMARY_SCHEMA = json.dumps(EpisodeMemory.model_json_schema(), separators=(",", 
 
 class SummaryUnavailable(RuntimeError):
     pass
-
-
-def decode_json(content: object):
-    if not isinstance(content, str):
-        raise ValueError("model content must be a JSON string")
-    text = content.strip()
-    fenced = re.fullmatch(
-        r"(?P<fence>`{3,})(?:json)?\s*(?P<body>.*?)\s*(?P=fence)", text,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    return json.loads(fenced.group("body") if fenced else text)
 
 
 def evidence_rows(trace: list[DecisionTransition]) -> list[dict]:

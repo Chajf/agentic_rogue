@@ -13,7 +13,8 @@ from game_runner.context.compaction import SummaryUnavailable, compact_batch, ev
 from game_runner.context.memory import MemoryRevision
 from game_runner.context.messages import build_messages
 from game_runner.context.progress import Progress
-from game_runner.persistence.repository import DecisionTransition, GameRepository, ObservationOutcome
+from game_runner.context.transitions import DecisionTransition, ObservationOutcome
+from game_runner.persistence.repository import GameRepository
 
 logger = logging.getLogger(__name__)
 
