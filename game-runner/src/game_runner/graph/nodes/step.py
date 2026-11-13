@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field
 
+from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.clients.rogue import (
     ActionRequest, KeyActionRequest, RogueAPIError, RogueClient, RogueTransportError,
 )
@@ -57,8 +58,9 @@ def validate_mode(decision: Decision, mode: str) -> None:
 def make_nodes(
     model: BaseChatModel, client: RogueClient, repository: GameRepository,
     *, context_settings: ContextSettings, max_model_calls: int, summary_model=None,
+    budget: TrialBudget | None = None,
 ):
-    planner = ContextPlanner(model, repository, context_settings, summary_model)
+    planner = ContextPlanner(model, repository, context_settings, summary_model, budget)
 
     async def context(state: StepState) -> dict:
         observation, event_id = state["observation"], state["observation_event_id"]
@@ -78,6 +80,8 @@ def make_nodes(
         count = count_messages(model, messages)
         if count.count + context_settings.actor_output_tokens > context_settings.token_budget:
             raise ContextLimitError("actor request and reserved output exceed context budget")
+        if budget:
+            budget.start_call()
         input_messages = [{"role": message.type, "content": message.content} for message in messages]
         call_id = repository.start_model_call(
             state["session_id"], input_messages, observation_event_id=state["observation_event_id"],
@@ -86,10 +90,12 @@ def make_nodes(
         )
         started = time.monotonic()
         try:
-            response = await model.ainvoke(messages)
+            response = await within_budget(budget, lambda: model.ainvoke(messages))
         except Exception as exc:
             repository.finish_model_call(
-                call_id, "error", validation_error=str(exc),
+                call_id, "error", validation_error=(
+                    type(exc).__name__ if budget and not isinstance(exc, BudgetStop) else str(exc)
+                ),
                 duration_ms=round((time.monotonic() - started) * 1000),
             )
             raise
@@ -143,19 +149,24 @@ def make_nodes(
         action = state["action"]
         assert action is not None
         action_payload = action.model_dump(mode="json", exclude_none=True)
+        if budget:
+            budget.start_action()
         event_id = repository.start_game_event(
             state["session_id"], "action", model_call_id=state["call_id"],
             action_request=action_payload,
         )
         before = state["observation"]
         try:
-            observed = await client.action(before.episode_id, action)
+            observed = await within_budget(budget, lambda: client.action(before.episode_id, action))
         except RogueAPIError as exc:
             repository.finish_game_event(event_id, "failed", http_status=exc.status_code, error=exc.detail)
             raise
         except RogueTransportError as exc:
             try:
-                recovered = await client.observe()
+                recovered = await within_budget(budget, client.observe)
+            except BudgetStop as stop:
+                repository.finish_game_event(event_id, "uncertain", error=str(stop))
+                raise
             except (RogueAPIError, RogueTransportError, ValueError) as recovery_error:
                 repository.finish_game_event(event_id, "uncertain", error=f"{exc}; reconciliation failed: {recovery_error}")
                 raise SessionInterrupted("cannot reconcile timed-out action") from recovery_error

@@ -74,3 +74,47 @@ def test_manifest_rejects_duplicate_trials_unmatched_evaluation_and_secrets():
     payload["actor"]["api_key"] = "secret"
     with pytest.raises(ValueError, match="extra_forbidden"):
         Manifest.model_validate(payload)
+
+
+async def test_series_continues_in_order_and_leaves_budget_skips_unstarted(isolated_database, monkeypatch, tmp_path):
+    from contextlib import asynccontextmanager
+
+    from game_runner.config import Settings
+    from game_runner.pilot.runner import run_series
+
+    migrate.main()
+    monkeypatch.setattr(store, "connect", isolated_database)
+    payload = make_manifest().model_dump(mode="json")
+    payload["series_limits"]["actions"] = 1
+    payload["trials"].append({"trial_id": "last", "seed": 1235, "context_policy": "history_only"})
+    manifest = Manifest.model_validate(payload)
+    binary = tmp_path / "rogue"
+    binary.write_bytes(b"fake")
+    order = []
+
+    @asynccontextmanager
+    async def fake_rogue(*_):
+        async def close():
+            order.append("close")
+        order.append("open")
+        yield object(), close
+
+    async def execute(settings, repository, *, session_id, client, budget, on_finish):
+        order.append(settings.context_policy)
+        if settings.context_policy == "history_only":
+            on_finish("error", "provider_error")
+        else:
+            budget.start_action()
+            on_finish("dead", "dead")
+
+    runtime = Settings("http://test", 10, "http://test", "fake", "local", 5, 42, 3, 2, 8192)
+    assert await run_series(manifest, runtime, binary=binary, revision="0" * 40,
+                            rogue_factory=fake_rogue, execute_trial=execute) == "series_action_limit"
+    assert order == ["open", "history_only", "close", "working_memory", "close"]
+    with isolated_database() as connection:
+        assert connection.execute(
+            "SELECT trial_id, outcome, reason FROM pilot_trials ORDER BY ordinal",
+        ).fetchall() == [
+            ("first", "failed", "provider_error"), ("second", "ended", "dead"),
+            ("last", "unstarted", "series_action_limit"),
+        ]

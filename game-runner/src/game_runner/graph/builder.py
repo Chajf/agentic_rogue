@@ -3,6 +3,7 @@
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 
+from game_runner.budget import TrialBudget
 from game_runner.clients.rogue import RogueClient
 from game_runner.context.planning import ContextSettings
 from game_runner.graph.nodes.step import make_nodes
@@ -14,12 +15,14 @@ def build_graph(
     model: BaseChatModel, client: RogueClient, repository: GameRepository,
     *, context_token_budget: int, max_model_calls: int, history_recent_interactions: int = 8,
     context_settings: ContextSettings | None = None, summary_model=None,
+    budget: TrialBudget | None = None,
 ):
     context, invoke_model, validate, perform_action = make_nodes(
         model, client, repository,
         max_model_calls=max_model_calls,
         context_settings=context_settings or ContextSettings(context_token_budget, history_recent_interactions),
         summary_model=summary_model,
+        budget=budget,
     )
     graph = StateGraph(StepState)
     graph.add_node("context", context)

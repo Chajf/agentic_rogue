@@ -6,6 +6,7 @@ from uuid import UUID
 
 from langchain_core.messages import BaseMessage
 
+from game_runner.budget import TrialBudget
 from game_runner.clients.rogue import Observation
 from game_runner.context.budget import ContextLimitError, RETRY_RESERVE, count_messages
 from game_runner.context.compaction import SummaryUnavailable, compact_batch, evidence_rows, summary_messages
@@ -40,6 +41,7 @@ class ContextPlanner:
     repository: GameRepository
     settings: ContextSettings
     summary_model: object | None = None
+    budget: TrialBudget | None = None
 
     async def prepare(
         self, session_id: UUID, observation: Observation, event_id: int,
@@ -105,6 +107,7 @@ class ContextPlanner:
                     revision, prefix[:size], rows[:size], token_budget=settings.summary_token_budget,
                     output_tokens=settings.summary_output_tokens, attempts=settings.summary_attempts,
                     fits_actor=lambda candidate: fits(render([], candidate)),
+                    budget=self.budget,
                 )
             except (SummaryUnavailable, ContextLimitError) as error:
                 logger.warning("Episode %s could not compact through an uncovered prefix: %s", session_id, error)
