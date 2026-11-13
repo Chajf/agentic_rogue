@@ -30,14 +30,6 @@ class DecisionTransition:
 
 
 class GameRepository:
-    def interrupt_open_sessions(self) -> None:
-        with connect() as connection:
-            connection.execute(
-                "UPDATE game_sessions SET status = 'interrupted', ended_at = now(), "
-                "error = 'runner restarted before session completion' "
-                "WHERE status IN ('starting', 'running')"
-            )
-
     def create_session(
         self, session_id: UUID, model_name: str, prompt_version: str, *, context_policy: str | None = None,
     ) -> None:

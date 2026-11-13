@@ -9,6 +9,7 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.context.budget import ContextLimitError, count_messages
 from game_runner.context.memory import EpisodeMemory, MemoryRevision
 from game_runner.context.progress import Progress
@@ -97,6 +98,7 @@ async def compact_batch(
     model, repository: GameRepository, session_id: UUID, episode_id: UUID,
     previous: MemoryRevision | None, trace: list[DecisionTransition], rows: list[dict],
     *, token_budget: int, output_tokens: int, attempts: int, fits_actor: Callable[[MemoryRevision], bool],
+    budget: TrialBudget | None = None,
 ) -> MemoryRevision:
     boundary = trace[-1].output_event_id
     allowed, gaps = evidence_ids(trace)
@@ -109,6 +111,8 @@ async def compact_batch(
         count = count_messages(model, messages)
         if count.count + output_tokens > token_budget:
             raise ContextLimitError("episode summary prompt exceeds its context budget")
+        if budget:
+            budget.start_call()
         call_id = repository.start_model_call(
             session_id, [{"role": message.type, "content": message.content} for message in messages],
             observation_event_id=boundary, purpose="episode_summary",
@@ -117,14 +121,18 @@ async def compact_batch(
         )
         started = time.monotonic()
         try:
-            response = await model.ainvoke(messages)
+            response = await within_budget(budget, lambda: model.ainvoke(messages))
             if not isinstance(response, AIMessage):
                 raise TypeError("summary model did not return AIMessage")
         except Exception as exc:
             repository.finish_model_call(
-                call_id, "error", validation_error=str(exc),
+                call_id, "error", validation_error=(
+                    type(exc).__name__ if budget and not isinstance(exc, BudgetStop) else str(exc)
+                ),
                 duration_ms=round((time.monotonic() - started) * 1000),
             )
+            if isinstance(exc, BudgetStop):
+                raise
             correction = ""
             continue
         duration_ms = round((time.monotonic() - started) * 1000)

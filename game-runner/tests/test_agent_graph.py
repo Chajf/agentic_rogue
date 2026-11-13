@@ -72,9 +72,6 @@ class FakeRepository:
             observation_event_id = input_id
         return list(reversed(history))
 
-    def interrupt_open_sessions(self):
-        self.interrupted_old_sessions = True
-
     def create_session(self, session_id, model_name, prompt_version, *, context_policy):
         self.session_id = session_id
         self.model_name = model_name
@@ -410,4 +407,3 @@ async def test_runner_stops_after_terminal_observation(monkeypatch, initialize_m
     assert len(client.actions) == 1
     assert [event["kind"] for event in repository.events] == ["reset", "action"]
     assert [call["observation_event_id"] for call in repository.calls] == [1]
-    assert repository.interrupted_old_sessions
