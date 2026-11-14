@@ -37,7 +37,10 @@ class FakeModel:
 
     async def ainvoke(self, messages):
         self.inputs.append(messages)
-        return AIMessage(content=next(self.responses), usage_metadata={
+        response = next(self.responses)
+        if isinstance(response, AIMessage):
+            return response
+        return AIMessage(content=response, usage_metadata={
             "input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
         })
 
@@ -166,6 +169,30 @@ async def test_one_graph_invocation_retries_model_but_executes_one_action(wrappe
     assert repository.calls[1]["raw_response"]["content"] == wrapper.format(json.dumps({
         "action": {"type": "semantic", "action": "MOVE_UP"}, "rationale": "Explore north.",
     }))
+
+
+@pytest.mark.asyncio
+async def test_reasoning_exhaustion_reports_empty_completion_without_dispatch() -> None:
+    episode_id = uuid4()
+    repository = FakeRepository()
+    client = FakeClient(observed(episode_id, 1))
+    response = AIMessage(
+        content="", response_metadata={"finish_reason": "length"},
+        usage_metadata={
+            "input_tokens": 1010, "output_tokens": 512, "total_tokens": 1522,
+            "output_token_details": {"reasoning": 512},
+        },
+    )
+    graph = build_graph(
+        FakeModel(response, response), client, repository, context_token_budget=8192, max_model_calls=2,
+    )
+
+    with pytest.raises(DecisionValidationError, match="512 tokens spent on reasoning"):
+        await graph.ainvoke(input_state(episode_id))
+
+    assert not client.actions
+    assert [call["status"] for call in repository.calls] == ["invalid", "invalid"]
+    assert all(call["raw_response"]["content"] == "" for call in repository.calls)
 
 
 @pytest.mark.asyncio

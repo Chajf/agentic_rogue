@@ -15,6 +15,15 @@ uv run --all-packages --group test pytest
 docker compose up --build
 ```
 
+On OpenRouter, reasoning can consume the completion budget before the model
+returns a JSON action. If the runner reports this, run a single episode with
+reasoning disabled on a model that supports the setting.
+
+```bash
+docker compose run --rm --build \
+  -e 'MODEL_KWARGS={"extra_body":{"reasoning":{"enabled":false}}}' game-runner
+```
+
 ## Sequential pilot
 
 Install both workspace packages and build Rogue from the source revision in
@@ -32,6 +41,15 @@ uv run --locked --all-packages python -m game_runner.pilot export \
 A minimal development manifest follows. Use a fresh series UUID for each run.
 Evaluation manifests require a history-only and a working-memory trial for every
 seed, with a seed set disjoint from development in the same database.
+For an OpenRouter model that supports disabling reasoning, set
+`actor.reasoning_enabled` to `false`. The manifest records the setting and the
+runner applies it to decisions and episode summaries in both policies. Omit it
+to use the provider default.
+
+For DeepSeek V4.1 Flash on OpenRouter, a matched development smoke run reached
+12 actions per policy with reasoning disabled and both `actor.context_tokens`
+and `actor.summary_context_tokens` set to 16384. The actor and summary completion
+caps were 512 and 1024 respectively.
 
 ```json
 {

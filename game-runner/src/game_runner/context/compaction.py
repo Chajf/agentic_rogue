@@ -128,7 +128,7 @@ async def compact_batch(
         duration_ms = round((time.monotonic() - started) * 1000)
         raw = response.model_dump(mode="json")
         try:
-            memory = EpisodeMemory.model_validate(decode_json(response.content))
+            memory = EpisodeMemory.model_validate(decode_json(response))
             memory.check_sources(allowed, gaps)
             if not fits_actor(MemoryRevision(0, boundary, memory, frozenset(gaps))):
                 raise ValueError("summary is too long for the actor context budget")
