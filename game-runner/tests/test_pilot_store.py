@@ -4,6 +4,7 @@ import pytest
 
 import game_runner.pilot.store as store
 from game_runner import migrate
+from game_runner.config import Settings
 from game_runner.pilot.manifest import Manifest
 
 from test_persistence import isolated_database  # noqa: F401
@@ -76,10 +77,27 @@ def test_manifest_rejects_duplicate_trials_unmatched_evaluation_and_secrets():
         Manifest.model_validate(payload)
 
 
+def test_manifest_applies_explicit_reasoning_setting_to_both_policies():
+    runtime = Settings(
+        "http://test", 10, "http://test", "fake", "local", 5, 42, 3, 2, 8192,
+        model_kwargs={"extra_body": {"reasoning": {"enabled": True}}},
+    )
+    original = make_manifest()
+    payload = original.model_dump(mode="json")
+    payload["actor"]["reasoning_enabled"] = False
+    manifest = Manifest.model_validate(payload)
+    assert manifest.model_dump(mode="json")["actor"]["reasoning_enabled"] is False
+
+    for trial in manifest.trials:
+        assert "extra_body" not in original.settings(runtime, trial).model_kwargs
+        assert manifest.settings(runtime, trial).model_kwargs["extra_body"] == {
+            "reasoning": {"enabled": False},
+        }
+
+
 async def test_series_continues_in_order_and_leaves_budget_skips_unstarted(isolated_database, monkeypatch, tmp_path):
     from contextlib import asynccontextmanager
 
-    from game_runner.config import Settings
     from game_runner.pilot.runner import run_series
 
     migrate.main()

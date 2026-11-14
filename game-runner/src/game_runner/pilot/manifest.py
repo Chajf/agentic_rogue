@@ -25,6 +25,7 @@ class Limits(ManifestModel):
 class Actor(ManifestModel):
     model_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
     temperature: Annotated[float, Field(ge=0, le=2, allow_inf_nan=False)] = 0
+    reasoning_enabled: Annotated[bool, Field(strict=True)] | None = None
     output_tokens: PositiveInt = 512
     context_tokens: PositiveInt = 8192
     history_interactions: Annotated[int, Field(strict=True, ge=0)] = 8
@@ -80,6 +81,8 @@ class Manifest(ManifestModel):
         # come from the frozen manifest and are shared across policies.
         kwargs = {key: runtime.model_kwargs[key] for key in ("default_headers",) if key in runtime.model_kwargs}
         kwargs.update(temperature=actor.temperature, max_tokens=actor.output_tokens, max_retries=0)
+        if actor.reasoning_enabled is not None:
+            kwargs["extra_body"] = {"reasoning": {"enabled": actor.reasoning_enabled}}
         return Settings(
             rogue_api_url=runtime.rogue_api_url, rogue_timeout_seconds=runtime.rogue_timeout_seconds,
             model_base_url=runtime.model_base_url, model_api_key=runtime.model_api_key,

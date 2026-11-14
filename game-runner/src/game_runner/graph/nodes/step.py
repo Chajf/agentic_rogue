@@ -86,7 +86,7 @@ def make_nodes(
         error: str | None = None
         decision = None
         try:
-            decision = parse_decision(response.content, state["observation"].mode)
+            decision = parse_decision(response, state["observation"].mode)
         except ValueError as exc:
             error = str(exc)
         repository.finish_model_call(
