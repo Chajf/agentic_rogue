@@ -45,7 +45,7 @@ async def private_rogue(binary: Path, timeout: float):
 
 async def run_series(
     manifest: Manifest, runtime: Settings, *, binary: Path, revision: str,
-    rogue_factory=private_rogue, execute_trial=run_session,
+    rogue_factory=private_rogue, execute_trial=run_session, show_progress: bool = False,
 ) -> str:
     with binary.open("rb") as source:
         digest = file_digest(source, "sha256").hexdigest()
@@ -60,9 +60,12 @@ async def run_series(
     with series_lock(manifest.series_id) as connection:
         create_series(connection, manifest, provenance)
         budget = RequestBudget(series.actions, series.model_calls, series.seconds, "series")
+        total = len(manifest.trials)
+        if show_progress:
+            print(f"Series {manifest.series_id} started with {total} trials.", flush=True)
         try:
             async with rogue_factory(binary, runtime.rogue_timeout_seconds) as (client, close_episode):
-                for trial in manifest.trials:
+                for number, trial in enumerate(manifest.trials, start=1):
                     budget.check(action=True, call=True)
                     session_id = uuid4()
                     settings = manifest.settings(runtime, trial)
@@ -71,9 +74,22 @@ async def run_series(
                         RequestBudget(limits.actions, limits.model_calls, limits.seconds, "trial"), budget,
                     )
                     claim_trial(connection, manifest, trial, session_id)
+                    if show_progress:
+                        print(
+                            f"Trial {number}/{total} started | seed {trial.seed} | {trial.context_policy} "
+                            f"| session {session_id}",
+                            flush=True,
+                        )
 
                     def on_finish(status: str, detail: str) -> None:
                         finalize_trial(connection, manifest.series_id, trial.trial_id, status, detail)
+                        if show_progress:
+                            print(
+                                f"Trial {number}/{total} finished | {status} ({detail}) "
+                                f"| {trial_budget.trial.actions}/{limits.actions} actions "
+                                f"| {trial_budget.trial.calls}/{limits.model_calls} model calls",
+                                flush=True,
+                            )
 
                     try:
                         await execute_trial(
@@ -92,4 +108,10 @@ async def run_series(
             raise
         finally:
             finalize_series(connection, manifest.series_id, reason)
+            if show_progress:
+                print(
+                    f"Series totals | {budget.actions}/{series.actions} actions "
+                    f"| {budget.calls}/{series.model_calls} model calls | {reason}",
+                    flush=True,
+                )
     return reason

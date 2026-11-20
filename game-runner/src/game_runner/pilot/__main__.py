@@ -24,6 +24,7 @@ def main() -> None:
     run.add_argument("--manifest", required=True, type=Path)
     run.add_argument("--rogue-binary", type=Path, default=os.getenv("ROGUE_ENV_ROGUE_BINARY"))
     run.add_argument("--runner-revision", default=os.getenv("PILOT_RUNNER_REVISION"))
+    run.add_argument("--progress", action="store_true", help="print trial and series progress")
     export = commands.add_parser("export")
     export.add_argument("--series-id", required=True, type=UUID)
     export.add_argument("--output", required=True, type=Path)
@@ -47,7 +48,9 @@ def main() -> None:
         os.environ["MODEL_NAME"] = manifest.actor.model_name
         runtime = Settings.from_env()
         migrate()
-        reason = asyncio.run(run_series(manifest, runtime, binary=binary.resolve(), revision=revision))
+        reason = asyncio.run(run_series(
+            manifest, runtime, binary=binary.resolve(), revision=revision, show_progress=args.progress,
+        ))
         print(f"series {manifest.series_id} ended with {reason}")
     except ValidationError as exc:
         errors = ", ".join(".".join(map(str, item["loc"])) or "manifest" for item in exc.errors())
