@@ -128,6 +128,7 @@ async def run_session(
                     summary_token_budget=settings.summary_context_token_budget,
                     summary_output_tokens=settings.summary_output_tokens, summary_attempts=settings.max_summary_attempts,
                     context_variant=settings.context_variant, prompt_profile=settings.prompt_profile,
+                    history_format=settings.history_format,
                 ),
                 summary_model=summary_model,
                 budget=budget,

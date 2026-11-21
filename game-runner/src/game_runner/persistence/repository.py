@@ -8,7 +8,7 @@ from psycopg.types.json import Jsonb
 from game_runner.clients.rogue import Observation
 from game_runner.context.memory import EpisodeMemory, MemoryRevision, POLICY_VERSION, SCHEMA_VERSION
 
-from game_runner.context.transitions import DecisionTransition
+from game_runner.context.transitions import DecisionTransition, HistoryWindow
 
 from .database import connect
 
@@ -41,14 +41,15 @@ class GameRepository:
         self, session_id: UUID, input_messages: list[dict], *, observation_event_id: int,
         purpose: str = "decision", memory_revision_id: int | None = None,
         input_token_count: int | None = None, input_token_count_method: str | None = None,
+        history_window: HistoryWindow | None = None,
     ) -> int:
         with connect() as connection:
             row = connection.execute(
                 "INSERT INTO model_calls(session_id, input_messages, observation_event_id, purpose, "
-                "memory_revision_id, input_token_count, input_token_count_method, status) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING id",
+                "memory_revision_id, input_token_count, input_token_count_method, history_window, status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING id",
                 (session_id, Jsonb(input_messages), observation_event_id, purpose, memory_revision_id,
-                 input_token_count, input_token_count_method),
+                 input_token_count, input_token_count_method, Jsonb(history_window) if history_window is not None else None),
             ).fetchone()
             assert row is not None
             return row[0]
@@ -120,7 +121,8 @@ class GameRepository:
                                input.outcome AS input_outcome, call.id AS model_call_id,
                                call.parsed_action AS action, call.decision_rationale AS rationale,
                                output.id AS output_event_id, output.observation AS output_observation,
-                               output.outcome AS output_outcome
+                               output.outcome AS output_outcome, output.progress,
+                               input.progress AS input_progress
                         FROM game_events AS output
                         JOIN model_calls AS call
                             ON call.id = output.model_call_id AND call.session_id = output.session_id
@@ -141,7 +143,7 @@ class GameRepository:
                         WHERE history.depth < %s
                     )
                     SELECT input_event_id, input_observation, input_outcome, model_call_id, action,
-                           rationale, output_event_id, output_observation, output_outcome
+                           rationale, output_event_id, output_observation, output_outcome, progress, input_progress
                     FROM history ORDER BY depth DESC
                     """,
                     (session_id, observation_event_id, limit),

@@ -176,7 +176,7 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
         "model_call": """
             SELECT id, observation_event_id, memory_revision_id, purpose, status, input_messages,
                    parsed_action, decision_rationale, usage_metadata, duration_ms, created_at,
-                   input_token_count, input_token_count_method
+                   input_token_count, input_token_count_method, history_window
             FROM model_calls WHERE session_id = %s ORDER BY id
         """,
         "memory_revision": """
@@ -192,6 +192,7 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
             trial["context_variant"] = planned.get("context_variant", "baseline")
             trial["prompt_profile"] = planned.get("prompt_profile", "legacy")
             trial["structured_state"] = planned.get("structured_state", "off")
+            trial["history_format"] = planned.get("history_format", "replay")
             identity = {"series_id": series_id, "trial_id": trial["trial_id"], "session_id": trial["session_id"]}
             source = {kind: _rows(connection, query, (trial["session_id"],)) if trial["session_id"] else []
                       for kind, query in queries.items()}

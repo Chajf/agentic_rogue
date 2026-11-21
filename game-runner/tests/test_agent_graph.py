@@ -71,7 +71,8 @@ class FakeRepository:
                 action=call["parsed_action"], rationale=call["decision_rationale"],
                 output_event_id=observation_event_id,
                 output_observation=Observation.model_validate(output["observation"]),
-                output_outcome=output["outcome"],
+                output_outcome=output["outcome"], progress=output.get("progress"),
+                input_progress=before.get("progress"),
             ))
             observation_event_id = input_id
         return list(reversed(history))
@@ -319,7 +320,7 @@ def test_context_preserves_order_and_drops_whole_oldest_pairs() -> None:
     assert _fit_recent(
         history, lambda selected: build_messages(current, selected),
         lambda rendered: count_messages(None, rendered).count <= budget,
-    ) == recent_only
+    ) == (recent_only, history[-1:])
 
 
 def test_selection_mode_accepts_only_matching_key() -> None:

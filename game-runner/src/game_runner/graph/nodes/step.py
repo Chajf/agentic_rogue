@@ -46,6 +46,7 @@ def make_nodes(
         return {
             "messages": prepared.messages, "base_messages": prepared.messages,
             "memory_revision_id": prepared.revision_id, "progress": progress,
+            "history_window": prepared.history_window,
             "attempts": 0,
             "action": None,
         }
@@ -61,7 +62,7 @@ def make_nodes(
         call_id = repository.start_model_call(
             state["session_id"], input_messages, observation_event_id=state["observation_event_id"],
             memory_revision_id=state["memory_revision_id"],
-            input_token_count=count.count, input_token_count_method=count.method,
+            input_token_count=count.count, input_token_count_method=count.method, history_window=state["history_window"],
         )
         started = time.monotonic()
         try:
