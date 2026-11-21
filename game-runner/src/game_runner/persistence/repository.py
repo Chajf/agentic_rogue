@@ -8,7 +8,7 @@ from psycopg.types.json import Jsonb
 from game_runner.clients.rogue import Observation
 from game_runner.context.memory import EpisodeMemory, MemoryRevision, POLICY_VERSION, SCHEMA_VERSION
 
-from game_runner.context.transitions import DecisionTransition
+from game_runner.context.transitions import DecisionTransition, HistoryWindow
 
 from .database import connect
 
@@ -41,14 +41,15 @@ class GameRepository:
         self, session_id: UUID, input_messages: list[dict], *, observation_event_id: int,
         purpose: str = "decision", memory_revision_id: int | None = None,
         input_token_count: int | None = None, input_token_count_method: str | None = None,
+        history_window: HistoryWindow | None = None,
     ) -> int:
         with connect() as connection:
             row = connection.execute(
                 "INSERT INTO model_calls(session_id, input_messages, observation_event_id, purpose, "
-                "memory_revision_id, input_token_count, input_token_count_method, status) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING id",
+                "memory_revision_id, input_token_count, input_token_count_method, history_window, status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING id",
                 (session_id, Jsonb(input_messages), observation_event_id, purpose, memory_revision_id,
-                 input_token_count, input_token_count_method),
+                 input_token_count, input_token_count_method, Jsonb(history_window) if history_window is not None else None),
             ).fetchone()
             assert row is not None
             return row[0]

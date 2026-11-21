@@ -23,6 +23,13 @@ def validate_structured_state(
         raise ValueError("map-v1 requires rules-v2, history_only, and the baseline context variant")
 
 
+def validate_history_format(history_format: HistoryFormat, structured_state: StructuredStateProfile) -> None:
+    if history_format not in {"replay", "compact"}:
+        raise ValueError("HISTORY_FORMAT must be replay or compact")
+    if history_format == "compact" and structured_state != "map-v1":
+        raise ValueError("compact history requires map-v1 structured state")
+
+
 @dataclass(frozen=True)
 class Settings:
     rogue_api_url: str
@@ -44,6 +51,7 @@ class Settings:
     context_variant: ContextVariant = "baseline"
     prompt_profile: PromptProfile = "legacy"
     structured_state: StructuredStateProfile = "off"
+    history_format: HistoryFormat = "replay"
 
     def __post_init__(self) -> None:
         if self.prompt_profile not in ACTOR_PROMPTS:
@@ -55,6 +63,7 @@ class Settings:
         ):
             raise ValueError("neighbors requires history_only")
         validate_structured_state(self.structured_state, self.prompt_profile, self.context_policy, self.context_variant)
+        validate_history_format(self.history_format, self.structured_state)
         if self.summary_output_tokens <= 0 or self.summary_context_token_budget <= self.summary_output_tokens:
             raise ValueError("SUMMARY_CONTEXT_TOKEN_BUDGET must exceed positive SUMMARY_OUTPUT_TOKENS")
         if self.max_summary_attempts <= 0:
@@ -71,6 +80,7 @@ class Settings:
     @classmethod
     def from_env(
         cls, *, prompt_profile: PromptProfile | None = None, structured_state: StructuredStateProfile | None = None,
+        history_format: HistoryFormat | None = None,
     ) -> "Settings":
         seed = os.getenv("GAME_SEED", "").strip()
         try:
@@ -106,6 +116,7 @@ class Settings:
             max_summary_attempts=int(os.getenv("MAX_SUMMARY_ATTEMPTS", "2")),
             prompt_profile=prompt_profile if prompt_profile is not None else os.getenv("PROMPT_PROFILE", "legacy"),
             structured_state=structured_state if structured_state is not None else os.getenv("STRUCTURED_STATE", "off"),
+            history_format=history_format if history_format is not None else os.getenv("HISTORY_FORMAT", "replay"),
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

@@ -58,6 +58,7 @@ def load(directory: Path, split: str) -> Corpus:
             and result.get("context_variant", "baseline") == planned.context_variant
             and result.get("prompt_profile", "legacy") == planned.prompt_profile
             and result.get("structured_state", "off") == planned.structured_state
+            and result.get("history_format", "replay") == planned.history_format
         )
         if not rule or result.get("split", split) != split:
             raise FeasibilityError("result does not match its manifest trial or split")
@@ -117,6 +118,7 @@ def _validate_links(corpus: Corpus) -> None:
             same_trial(events, call["observation_event_id"], call)
         if call["memory_revision_id"] is not None:
             same_trial(revisions, call["memory_revision_id"], call)
+        _validate_history_window(corpus, call)
     for revision in revisions.values():
         boundary = same_trial(events, revision["through_event_id"], revision)
         call = same_trial(calls, revision["model_call_id"], revision)
@@ -129,6 +131,39 @@ def _validate_links(corpus: Corpus) -> None:
         for gap in revision["gap_event_ids"]:
             if same_trial(events, gap, revision)["outcome"] != "uncertain" or gap > boundary["id"]:
                 raise FeasibilityError("invalid revision gap reference")
+
+
+def _validate_history_window(corpus: Corpus, call: dict) -> None:
+    window = call.get("history_window")
+    if window is None:
+        return
+    trial = corpus.trials[call["trial_id"]]
+    if (
+        not isinstance(window, dict)
+        or call["purpose"] != "decision"
+        or trial["context_policy"] != "history_only"
+        or window.get("format") != trial.get("history_format", "replay")
+        or call["observation_event_id"] is None
+    ):
+        raise FeasibilityError("history window does not match its decision call or trial")
+    eligible = window.get("eligible_output_event_ids")
+    delivered = window.get("delivered_output_event_ids")
+    if (
+        not isinstance(eligible, list) or not isinstance(delivered, list)
+        or any(type(event_id) is not int for event_id in [*eligible, *delivered])
+        or (delivered and eligible[-len(delivered):] != delivered)
+    ):
+        raise FeasibilityError("delivered history is not a suffix of eligible history")
+    expected = call["observation_event_id"]
+    for event_id in reversed(eligible):
+        event = same_trial(corpus.events, event_id, call)
+        if (
+            event_id != expected or event["kind"] != "action" or event["outcome"] != "succeeded"
+            or event["observation"] is None or event["model_call_id"] is None
+        ):
+            raise FeasibilityError("history window is not linked to the call's input observation")
+        source = same_trial(corpus.calls, event["model_call_id"], event)
+        expected = source["observation_event_id"]
 
 
 def prepare(corpus: Corpus, origin: Origin) -> dict:

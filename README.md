@@ -64,6 +64,12 @@ setting defaults to `off` and the export records it for each trial. Standalone r
 `STRUCTURED_STATE=map-v1` alongside `PROMPT_PROFILE=rules-v2` and
 `CONTEXT_POLICY=history_only`.
 
+For a history-format comparison, select `"history_format": "compact"` on one
+`map-v1` development trial and use `"history_format": "replay"` on its match.
+Standalone runs can set `HISTORY_FORMAT=compact` with `STRUCTURED_STATE=map-v1`.
+The export includes the eligible and delivered history event IDs and the input
+token count for each history-only decision call.
+
 For DeepSeek V4.1 Flash on OpenRouter, a matched development smoke run reached
 12 actions per policy with reasoning disabled and both `actor.context_tokens`
 and `actor.summary_context_tokens` set to 16384. The actor and summary completion

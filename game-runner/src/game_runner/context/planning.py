@@ -8,13 +8,13 @@ from langchain_core.messages import BaseMessage
 
 from game_runner.budget import TrialBudget
 from game_runner.clients.rogue import Observation
-from game_runner.config import ContextVariant
+from game_runner.config import ContextVariant, HistoryFormat
 from game_runner.context.budget import ContextLimitError, RETRY_RESERVE, count_messages
 from game_runner.context.compaction import SummaryUnavailable, compact_batch, evidence_rows, summary_messages
 from game_runner.context.memory import MemoryRevision
 from game_runner.context.messages import build_messages
 from game_runner.context.progress import Progress
-from game_runner.context.transitions import DecisionTransition, ObservationOutcome
+from game_runner.context.transitions import DecisionTransition, HistoryWindow, ObservationOutcome
 from game_runner.context.working_state import UnlinkedObservation, WorkingState
 from game_runner.context.working_views import actor_view, smaller_actor_views
 from game_runner.persistence.repository import GameRepository
@@ -34,12 +34,14 @@ class ContextSettings:
     summary_attempts: int = 2
     context_variant: ContextVariant = "baseline"
     prompt_profile: PromptProfile = "legacy"
+    history_format: HistoryFormat = "replay"
 
 
 @dataclass(frozen=True)
 class PreparedContext:
     messages: list[BaseMessage]
     revision_id: int | None = None
+    history_window: HistoryWindow | None = None
 
 
 @dataclass
@@ -70,7 +72,7 @@ class ContextPlanner:
             return build_messages(
                 observation, history, observation_outcome=outcome, progress=progress,
                 memory=revision, uncovered=uncovered, context_variant=settings.context_variant,
-                prompt_profile=settings.prompt_profile, working_view=view,
+                prompt_profile=settings.prompt_profile, working_view=view, history_format=settings.history_format,
             )
 
         def fits(messages):
@@ -89,7 +91,12 @@ class ContextPlanner:
 
         if settings.policy == "history_only":
             history = self.repository.recent_transitions(session_id, event_id, settings.history_limit)
-            return PreparedContext(_fit_recent(history, render, fits))
+            messages, delivered = _fit_recent(history, render, fits)
+            return PreparedContext(messages, history_window={
+                "format": settings.history_format,
+                "eligible_output_event_ids": [transition.output_event_id for transition in history],
+                "delivered_output_event_ids": [transition.output_event_id for transition in delivered],
+            })
         if self.summary_model is None:
             raise SummaryUnavailable("working_memory requires a summary model")
 
@@ -152,10 +159,11 @@ class ContextPlanner:
 
 def _fit_recent(history, render, fits):
     for offset in range(len(history)):
-        messages = render(history[offset:])
+        suffix = history[offset:]
+        messages = render(suffix)
         if fits(messages):
-            return messages
-    return render([])
+            return messages, suffix
+    return render([]), []
 
 
 def _replay_suffix(trace: list[DecisionTransition], limit: int) -> list[DecisionTransition]:

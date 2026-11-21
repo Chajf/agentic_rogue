@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 from game_runner.clients.rogue import ActionRequest, KeyActionRequest, Observation
 from game_runner.context.progress import Progress
-from game_runner.context.transitions import ObservationOutcome
+from game_runner.context.transitions import HistoryWindow, ObservationOutcome
 from game_runner.context.working_state import WorkingState
 
 
@@ -20,6 +20,7 @@ class StepState(TypedDict):
     messages: NotRequired[list[BaseMessage]]
     base_messages: NotRequired[list[BaseMessage]]
     memory_revision_id: NotRequired[int | None]
+    history_window: NotRequired[HistoryWindow | None]
     progress: NotRequired[Progress]
     working_state: NotRequired[WorkingState | None]
     response: NotRequired[AIMessage]
