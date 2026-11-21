@@ -1,6 +1,7 @@
 """Bounded projections of the active map for the actor and goal selector."""
 
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from itertools import product
 
@@ -64,8 +65,26 @@ def actor_view(state: WorkingState) -> dict | None:
             {"kind": "stairs", "position": coordinates(pos), "source": _source(state.terrain[pos], state)}
             for pos in stairs[:2]
         ],
-        "recent_attempts": [attempt.record() for attempt in attempts[-4:]],
+        "recent_attempts": [
+            {**attempt.record(), "age": state.through.api_step - attempt.output.api_step}
+            for attempt in attempts[-4:]
+        ],
     }
+
+
+def smaller_actor_views(view: dict) -> Iterator[dict]:
+    """Trim the projection while retaining the current tile as long as possible."""
+    previous = view
+    for tiles, landmarks, attempts in ((4, 1, 1), (1, 1, 1), (1, 1, 0), (1, 0, 0)):
+        candidate = {
+            **view,
+            "tiles": view["tiles"][:tiles],
+            "landmarks": view["landmarks"][:landmarks],
+            "recent_attempts": view["recent_attempts"][-1:] if attempts else [],
+        }
+        if candidate != previous:
+            yield candidate
+            previous = candidate
 
 
 @dataclass(frozen=True)

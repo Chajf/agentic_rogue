@@ -16,7 +16,7 @@ from game_runner.context.messages import build_messages
 from game_runner.context.progress import Progress
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
 from game_runner.context.working_state import UnlinkedObservation, WorkingState
-from game_runner.context.working_views import actor_view
+from game_runner.context.working_views import actor_view, smaller_actor_views
 from game_runner.persistence.repository import GameRepository
 from game_runner.prompts.system import PromptProfile
 
@@ -77,7 +77,14 @@ class ContextPlanner:
             reserved = settings.actor_output_tokens + RETRY_RESERVE
             return count_messages(self.model, messages).count + reserved <= settings.token_budget
 
-        if not fits(render([])):
+        base_fits = fits(render([]))
+        if not base_fits and view is not None:
+            for candidate in smaller_actor_views(view):
+                view = candidate
+                if fits(render([])):
+                    base_fits = True
+                    break
+        if not base_fits:
             raise ContextLimitError("current observation and actor reserves exceed context budget")
 
         if settings.policy == "history_only":

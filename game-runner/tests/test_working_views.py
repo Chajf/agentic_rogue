@@ -2,11 +2,12 @@ from uuid import UUID
 
 import pytest
 
+from game_runner.context.budget import RETRY_RESERVE, count_messages
 from game_runner.context.messages import build_messages
 from game_runner.context.planning import ContextPlanner, ContextSettings
 from game_runner.context.progress import Progress
 from game_runner.context.working_state import UnlinkedObservation, replay_working_state
-from game_runner.context.working_views import actor_view, goal_view
+from game_runner.context.working_views import actor_view, goal_view, smaller_actor_views
 
 from test_agent_graph import FakeModel, FakeRepository
 from test_working_state import action, frame, transitions
@@ -112,3 +113,21 @@ async def test_context_planner_rejects_working_state_ahead_of_input():
     planner = ContextPlanner(FakeModel(), FakeRepository(), ContextSettings(8192, prompt_profile="rules-v2"))
     with pytest.raises(UnlinkedObservation, match="actor's input boundary"):
         await planner.prepare(UUID(int=2), reset, 10, "succeeded", Progress.initial(10, reset), state)
+
+
+async def test_context_planner_compacts_the_projection_to_fit_the_budget():
+    reset = frame(".......", ".......", "..@+...", ".......", ".......")
+    state, _ = replay_working_state(10, reset, [])
+    progress = Progress.initial(10, reset)
+    model = FakeModel()
+    compact = build_messages(
+        reset, [], progress=progress, working_view=next(smaller_actor_views(actor_view(state))),
+        prompt_profile="rules-v2",
+    )
+    budget = count_messages(model, compact).count + 512 + RETRY_RESERVE
+    planner = ContextPlanner(FakeModel(), FakeRepository(), ContextSettings(budget, prompt_profile="rules-v2"))
+
+    prepared = await planner.prepare(UUID(int=2), reset, 10, "succeeded", progress, state)
+
+    assert prepared.messages == compact
+    assert prepared.messages[-1].content.count("Current 80x24 screen") == 1

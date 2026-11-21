@@ -56,6 +56,14 @@ seed. The manifest supplies the profile for pilot runs, and omitted fields use
 `legacy`. The export records the planned profile and the prompt version of each
 started session.
 
+Set `"structured_state": "map-v1"` on a matching `rules-v2` trial to add
+observed map facts, visit counts, and recent attempts to the current observation.
+Both conditions use the same replay and action schema. Set a common context
+budget with room for the full replay and projection when comparing them. The
+setting defaults to `off` and the export records it for each trial. Standalone runs can set
+`STRUCTURED_STATE=map-v1` alongside `PROMPT_PROFILE=rules-v2` and
+`CONTEXT_POLICY=history_only`.
+
 For DeepSeek V4.1 Flash on OpenRouter, a matched development smoke run reached
 12 actions per policy with reasoning disabled and both `actor.context_tokens`
 and `actor.summary_context_tokens` set to 16384. The actor and summary completion
