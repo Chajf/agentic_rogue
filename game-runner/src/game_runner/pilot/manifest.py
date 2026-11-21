@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from game_runner.config import ContextVariant, Settings
+from game_runner.config import ContextVariant, Settings, StructuredStateProfile, validate_structured_state
 from game_runner.prompts.system import PromptProfile
 
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
@@ -50,6 +50,7 @@ class Trial(ManifestModel):
     context_policy: Policy
     context_variant: ContextVariant = "baseline"
     prompt_profile: PromptProfile = "legacy"
+    structured_state: StructuredStateProfile = "off"
 
 
 class Manifest(ManifestModel):
@@ -70,6 +71,10 @@ class Manifest(ManifestModel):
         ids = [trial.trial_id for trial in self.trials]
         if len(set(ids)) != len(ids):
             raise ValueError("trial IDs must be unique")
+        for trial in self.trials:
+            validate_structured_state(trial.structured_state, trial.prompt_profile, trial.context_policy, trial.context_variant)
+            if trial.structured_state == "map-v1" and self.split != "development":
+                raise ValueError("map-v1 trials require the development split")
         if any(trial.prompt_profile == "rules-v2" and (
             self.split != "development" or trial.context_policy != "history_only" or trial.context_variant != "baseline"
         ) for trial in self.trials):
@@ -108,4 +113,5 @@ class Manifest(ManifestModel):
             context_policy=trial.context_policy, summary_context_token_budget=actor.summary_context_tokens,
             summary_output_tokens=actor.summary_output_tokens, max_summary_attempts=actor.max_summary_attempts,
             context_variant=trial.context_variant, prompt_profile=trial.prompt_profile,
+            structured_state=trial.structured_state,
         )

@@ -15,6 +15,8 @@ from game_runner.context.memory import MemoryRevision
 from game_runner.context.messages import build_messages
 from game_runner.context.progress import Progress
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
+from game_runner.context.working_state import UnlinkedObservation, WorkingState
+from game_runner.context.working_views import actor_view, smaller_actor_views
 from game_runner.persistence.repository import GameRepository
 from game_runner.prompts.system import PromptProfile
 
@@ -50,22 +52,39 @@ class ContextPlanner:
 
     async def prepare(
         self, session_id: UUID, observation: Observation, event_id: int,
-        outcome: ObservationOutcome, progress: Progress,
+        outcome: ObservationOutcome, progress: Progress, working_state: WorkingState | None = None,
     ) -> PreparedContext:
         settings = self.settings
+        view = None
+        if working_state is not None:
+            if (
+                working_state.through.event_id != event_id
+                or working_state.through.api_step != observation.api_step
+                or working_state.episode_id != observation.episode_id
+                or working_state.outcome != outcome
+            ):
+                raise UnlinkedObservation("working state is outside the actor's input boundary")
+            view = actor_view(working_state)
 
         def render(history, revision=None, uncovered=None):
             return build_messages(
                 observation, history, observation_outcome=outcome, progress=progress,
                 memory=revision, uncovered=uncovered, context_variant=settings.context_variant,
-                prompt_profile=settings.prompt_profile,
+                prompt_profile=settings.prompt_profile, working_view=view,
             )
 
         def fits(messages):
             reserved = settings.actor_output_tokens + RETRY_RESERVE
             return count_messages(self.model, messages).count + reserved <= settings.token_budget
 
-        if not fits(render([])):
+        base_fits = fits(render([]))
+        if not base_fits and view is not None:
+            for candidate in smaller_actor_views(view):
+                view = candidate
+                if fits(render([])):
+                    base_fits = True
+                    break
+        if not base_fits:
             raise ContextLimitError("current observation and actor reserves exceed context budget")
 
         if settings.policy == "history_only":

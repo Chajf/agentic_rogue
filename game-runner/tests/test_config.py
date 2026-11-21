@@ -88,3 +88,17 @@ def test_prompt_profile_from_env(model_env, monkeypatch):
     monkeypatch.setenv("PROMPT_PROFILE", "other")
     with pytest.raises(ValueError, match="PROMPT_PROFILE"):
         Settings.from_env()
+
+
+def test_structured_state_from_env(model_env, monkeypatch):
+    monkeypatch.setenv("PROMPT_PROFILE", "legacy")
+    monkeypatch.setenv("CONTEXT_POLICY", "history_only")
+    monkeypatch.delenv("STRUCTURED_STATE", raising=False)
+    assert Settings.from_env().structured_state == "off"
+
+    monkeypatch.setenv("STRUCTURED_STATE", "map-v1")
+    with pytest.raises(ValueError, match="map-v1 requires rules-v2"):
+        Settings.from_env()
+    monkeypatch.setenv("PROMPT_PROFILE", "rules-v2")
+    assert Settings.from_env().structured_state == "map-v1"
+    assert Settings.from_env(prompt_profile="legacy", structured_state="off").structured_state == "off"

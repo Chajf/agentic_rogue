@@ -8,11 +8,13 @@ from langchain_core.language_models import BaseChatModel
 
 from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.clients.rogue import (
-    RogueAPIError, RogueClient, RogueTransportError,
+    Observation, RogueAPIError, RogueClient, RogueTransportError,
 )
 from game_runner.context.budget import ContextLimitError, RETRY_RESERVE, count_messages
 from game_runner.context.planning import ContextPlanner, ContextSettings
 from game_runner.context.progress import Progress
+from game_runner.context.transitions import DecisionTransition, ObservationOutcome
+from game_runner.context.working_state import UnlinkedObservation
 from game_runner.decision import parse_decision
 from game_runner.graph.state import StepState
 from game_runner.persistence.repository import GameRepository
@@ -39,6 +41,7 @@ def make_nodes(
         progress = state.get("progress") or Progress.initial(event_id, observation)
         prepared = await planner.prepare(
             state["session_id"], observation, event_id, state["observation_outcome"], progress,
+            state.get("working_state"),
         )
         return {
             "messages": prepared.messages, "base_messages": prepared.messages,
@@ -116,6 +119,43 @@ def make_nodes(
         assert decision is not None
         return {"action": decision.action, "rationale": decision.rationale}
 
+    def record_observation(
+        state: StepState, event_id: int, action_payload: dict, observation: Observation,
+        outcome: ObservationOutcome, *, error: str | None = None,
+    ) -> dict:
+        before = state["observation"]
+        progress = state["progress"].advance(
+            event_id, before, action_payload, observation, recovered=outcome == "uncertain",
+        )
+        persisted_progress = asdict(progress)
+        working_state = state.get("working_state")
+        if working_state is not None:
+            transition = DecisionTransition(
+                input_event_id=state["observation_event_id"],
+                input_observation=before,
+                input_outcome=state["observation_outcome"],
+                model_call_id=state["call_id"],
+                action=action_payload,
+                rationale=state["rationale"],
+                output_event_id=event_id,
+                output_observation=observation,
+                output_outcome=outcome,
+            )
+            try:
+                persisted_progress["working_state_delta"] = working_state.advance(transition, progress)
+            except UnlinkedObservation as exc:
+                repository.finish_game_event(event_id, "uncertain", error=str(exc))
+                raise SessionInterrupted("working-state observation could not be linked") from exc
+        repository.finish_game_event(
+            event_id, outcome, api_step=observation.api_step,
+            http_status=200 if outcome == "succeeded" else None,
+            observation=observation.model_dump(mode="json"), progress=persisted_progress, error=error,
+        )
+        return {
+            "next_observation": observation, "next_observation_event_id": event_id,
+            "next_observation_outcome": outcome, "next_progress": progress, "next_working_state": working_state,
+        }
+
     async def perform_action(state: StepState) -> dict:
         action = state["action"]
         assert action is not None
@@ -147,32 +187,14 @@ def make_nodes(
                     error=f"{exc}; episode or step mismatch during reconciliation",
                 )
                 raise SessionInterrupted("action outcome cannot be confirmed") from exc
-            progress = state["progress"].advance(event_id, before, action_payload, recovered, recovered=True)
-            repository.finish_game_event(
-                event_id, "uncertain", api_step=recovered.api_step,
-                observation=recovered.model_dump(mode="json"),
-                progress=asdict(progress),
+            return record_observation(
+                state, event_id, action_payload, recovered, "uncertain",
                 error=f"{exc}; state recovered but action output was lost",
             )
-            return {
-                "next_observation": recovered, "next_observation_event_id": event_id,
-                "next_observation_outcome": "uncertain",
-                "next_progress": progress,
-            }
         except Exception as exc:
             repository.finish_game_event(event_id, "uncertain", error=str(exc))
             raise
-        progress = state["progress"].advance(event_id, before, action_payload, observed, recovered=False)
-        repository.finish_game_event(
-            event_id, "succeeded", api_step=observed.api_step,
-            http_status=200, observation=observed.model_dump(mode="json"),
-            progress=asdict(progress),
-        )
-        return {
-            "next_observation": observed, "next_observation_event_id": event_id,
-            "next_observation_outcome": "succeeded",
-            "next_progress": progress,
-        }
+        return record_observation(state, event_id, action_payload, observed, "succeeded")
 
     return context, invoke_model, validate, perform_action
 
