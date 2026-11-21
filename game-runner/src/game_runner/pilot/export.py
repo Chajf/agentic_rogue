@@ -191,6 +191,7 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
             planned = planned_trials[trial["trial_id"]]
             trial["context_variant"] = planned.get("context_variant", "baseline")
             trial["prompt_profile"] = planned.get("prompt_profile", "legacy")
+            trial["structured_state"] = planned.get("structured_state", "off")
             identity = {"series_id": series_id, "trial_id": trial["trial_id"], "session_id": trial["session_id"]}
             source = {kind: _rows(connection, query, (trial["session_id"],)) if trial["session_id"] else []
                       for kind, query in queries.items()}

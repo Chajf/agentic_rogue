@@ -36,7 +36,7 @@ def build_messages(
     observation_outcome: ObservationOutcome = "succeeded",
     progress: Progress | None = None, memory: MemoryRevision | None = None,
     uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
-    prompt_profile: PromptProfile = "legacy",
+    prompt_profile: PromptProfile = "legacy", working_view: dict | None = None,
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=ACTOR_PROMPTS[prompt_profile].instruction)]
     for transition in history:
@@ -65,5 +65,11 @@ def build_messages(
         position = visible_position(observation)
         if position is not None and (progress is None or progress.position == position):
             current += neighbors_suffix(observation.screen, position)
+    if working_view is not None:
+        current += (
+            "\nObserved working state. Coordinates are zero-based [row, column]. "
+            "Null terrain is unknown. Age is in API steps.\n"
+            + json.dumps(working_view, ensure_ascii=False, separators=(",", ":"))
+        )
     messages.append(HumanMessage(content=current))
     return messages

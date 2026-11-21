@@ -86,7 +86,7 @@ def test_quiet_door_attempts_and_same_position_combat_are_distinct():
         (action("MOVE_DOWN_RIGHT"), frame(".@+B", "..B.", messages=("You hit the bat.",))),
     )
     state, deltas = replay_working_state(10, reset, trace)
-    assert [a.effect for a in state.attempts[((1, 1), "RIGHT")]] == ["quiet_failed_move"] * 2
+    assert [a.effect for a in state.attempts[(1, 1)]["RIGHT"]] == ["quiet_failed_move"] * 2
     assert deltas[-1]["attempt"]["effect"] == "combat_observed"
     assert deltas[-1]["attempt"]["to"] == [1, 1]
     assert state.visits[(1, 1)].count == 1

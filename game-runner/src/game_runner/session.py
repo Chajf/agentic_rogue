@@ -17,6 +17,7 @@ from game_runner.context.progress import Progress
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import SessionInterrupted
 from game_runner.context.transitions import ObservationOutcome
+from game_runner.context.working_state import UnlinkedObservation, WorkingState
 from game_runner.persistence.repository import GameRepository
 from game_runner.prompts.system import actor_prompt_version
 
@@ -93,9 +94,18 @@ async def run_session(
             return finish("error", _safe_error(exc, budget), reason="reset_error")
 
         progress = Progress.initial(event_id, observation)
+        working_state = None
+        reset_progress = asdict(progress)
+        if settings.structured_state == "map-v1":
+            try:
+                working_state, delta = WorkingState.from_reset(event_id, observation, progress)
+            except UnlinkedObservation as exc:
+                repository.finish_game_event(event_id, "uncertain", error=str(exc))
+                return finish("interrupted", str(exc), reason="reset_observation_unlinked")
+            reset_progress["working_state_delta"] = delta
         repository.finish_game_event(
             event_id, "succeeded", api_step=observation.api_step,
-            http_status=200, observation=observation.model_dump(mode="json"), progress=asdict(progress),
+            http_status=200, observation=observation.model_dump(mode="json"), progress=reset_progress,
         )
         repository.update_session(
             session_id, "running",
@@ -135,7 +145,7 @@ async def run_session(
                     "session_id": session_id, "observation": observation,
                     "observation_event_id": observation_event_id, "observation_outcome": observation_outcome,
                     "attempts": 0,
-                    "progress": progress,
+                    "progress": progress, "working_state": working_state,
                 })
             except BudgetStop as exc:
                 return finish("limit_reached", reason=str(exc))
@@ -150,6 +160,7 @@ async def run_session(
             observation_event_id = result["next_observation_event_id"]
             observation_outcome = result["next_observation_outcome"]
             progress = result["next_progress"]
+            working_state = result["next_working_state"]
             actions += 1
             print(
                 json.dumps({

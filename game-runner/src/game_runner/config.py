@@ -8,6 +8,18 @@ from typing import Any, Literal
 from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
 
 ContextVariant = Literal["baseline", "neighbors"]
+StructuredStateProfile = Literal["off", "map-v1"]
+
+
+def validate_structured_state(
+    profile: StructuredStateProfile, prompt_profile: PromptProfile, context_policy: str, context_variant: ContextVariant,
+) -> None:
+    if profile not in {"off", "map-v1"}:
+        raise ValueError("STRUCTURED_STATE must be off or map-v1")
+    if profile == "map-v1" and (
+        prompt_profile != "rules-v2" or context_policy != "history_only" or context_variant != "baseline"
+    ):
+        raise ValueError("map-v1 requires rules-v2, history_only, and the baseline context variant")
 
 
 @dataclass(frozen=True)
@@ -30,6 +42,7 @@ class Settings:
     max_summary_attempts: int = 2
     context_variant: ContextVariant = "baseline"
     prompt_profile: PromptProfile = "legacy"
+    structured_state: StructuredStateProfile = "off"
 
     def __post_init__(self) -> None:
         if self.prompt_profile not in ACTOR_PROMPTS:
@@ -40,6 +53,7 @@ class Settings:
             self.context_variant != "neighbors" or self.context_policy != "history_only"
         ):
             raise ValueError("neighbors requires history_only")
+        validate_structured_state(self.structured_state, self.prompt_profile, self.context_policy, self.context_variant)
         if self.summary_output_tokens <= 0 or self.summary_context_token_budget <= self.summary_output_tokens:
             raise ValueError("SUMMARY_CONTEXT_TOKEN_BUDGET must exceed positive SUMMARY_OUTPUT_TOKENS")
         if self.max_summary_attempts <= 0:
@@ -54,7 +68,9 @@ class Settings:
         return caps[0] if caps else 512
 
     @classmethod
-    def from_env(cls, *, prompt_profile: PromptProfile | None = None) -> "Settings":
+    def from_env(
+        cls, *, prompt_profile: PromptProfile | None = None, structured_state: StructuredStateProfile | None = None,
+    ) -> "Settings":
         seed = os.getenv("GAME_SEED", "").strip()
         try:
             model_kwargs = json.loads(os.getenv("MODEL_KWARGS", "").strip() or "{}")
@@ -88,6 +104,7 @@ class Settings:
             summary_output_tokens=int(os.getenv("SUMMARY_OUTPUT_TOKENS", "1024")),
             max_summary_attempts=int(os.getenv("MAX_SUMMARY_ATTEMPTS", "2")),
             prompt_profile=prompt_profile if prompt_profile is not None else os.getenv("PROMPT_PROFILE", "legacy"),
+            structured_state=structured_state if structured_state is not None else os.getenv("STRUCTURED_STATE", "off"),
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

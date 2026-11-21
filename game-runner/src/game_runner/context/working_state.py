@@ -85,7 +85,7 @@ class WorkingState:
     entities: dict[Position, Sighting] = field(default_factory=dict)
     visits: dict[Position, Visits] = field(default_factory=dict)
     edges: dict[tuple[Position, Position], Evidence] = field(default_factory=dict)
-    attempts: dict[tuple[Position, str], deque[Attempt]] = field(default_factory=dict)
+    attempts: dict[Position, dict[str, deque[Attempt]]] = field(default_factory=dict)
     _last_position: Position | None = None
 
     @classmethod
@@ -132,7 +132,8 @@ class WorkingState:
             self._observe(after, progress, delta)
         if same_map and attempt.origin is not None:
             action_group = attempt.direction or attempt.action.get("action") or attempt.action["key"]
-            self.attempts.setdefault((attempt.origin, action_group), deque(maxlen=2)).append(attempt)
+            groups = self.attempts.setdefault(attempt.origin, {})
+            groups.setdefault(action_group, deque(maxlen=2)).append(attempt)
             if attempt.effect == "confirmed_move":
                 assert attempt.destination is not None
                 edge = (attempt.origin, attempt.destination)
