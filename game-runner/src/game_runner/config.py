@@ -9,6 +9,7 @@ from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
 
 ContextVariant = Literal["baseline", "neighbors"]
 StructuredStateProfile = Literal["off", "map-v1"]
+HistoryFormat = Literal["replay", "compact"]
 
 
 def validate_structured_state(

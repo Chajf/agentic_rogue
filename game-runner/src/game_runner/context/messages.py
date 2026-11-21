@@ -6,7 +6,8 @@ import json
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from game_runner.clients.rogue import Observation
-from game_runner.config import ContextVariant
+from game_runner.config import ContextVariant, HistoryFormat
+from game_runner.context.compact_history import render_compact_history
 from game_runner.context.decision_support import neighbors_suffix
 from game_runner.context.memory import MemoryRevision
 from game_runner.context.progress import Progress, visible_position
@@ -37,16 +38,18 @@ def build_messages(
     progress: Progress | None = None, memory: MemoryRevision | None = None,
     uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
     prompt_profile: PromptProfile = "legacy", working_view: dict | None = None,
+    history_format: HistoryFormat = "replay",
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=ACTOR_PROMPTS[prompt_profile].instruction)]
-    for transition in history:
-        messages.extend((
-            HumanMessage(content=_observation_text(transition.input_observation, transition.input_outcome)),
-            AIMessage(content=json.dumps(
-                {"action": transition.action, "rationale": transition.rationale},
-                ensure_ascii=False, separators=(",", ":"),
-            )),
-        ))
+    if history_format == "replay":
+        for transition in history:
+            messages.extend((
+                HumanMessage(content=_observation_text(transition.input_observation, transition.input_outcome)),
+                AIMessage(content=json.dumps(
+                    {"action": transition.action, "rationale": transition.rationale},
+                    ensure_ascii=False, separators=(",", ":"),
+                )),
+            ))
 
     current = _observation_text(observation, observation_outcome, current=True)
     if progress is not None:
@@ -71,5 +74,7 @@ def build_messages(
             "Null terrain is unknown. Age is in API steps.\n"
             + json.dumps(working_view, ensure_ascii=False, separators=(",", ":"))
         )
+    if history_format == "compact":
+        current = render_compact_history(history) + current
     messages.append(HumanMessage(content=current))
     return messages

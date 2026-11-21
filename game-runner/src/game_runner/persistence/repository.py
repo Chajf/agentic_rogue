@@ -120,7 +120,8 @@ class GameRepository:
                                input.outcome AS input_outcome, call.id AS model_call_id,
                                call.parsed_action AS action, call.decision_rationale AS rationale,
                                output.id AS output_event_id, output.observation AS output_observation,
-                               output.outcome AS output_outcome
+                               output.outcome AS output_outcome, output.progress,
+                               input.progress AS input_progress
                         FROM game_events AS output
                         JOIN model_calls AS call
                             ON call.id = output.model_call_id AND call.session_id = output.session_id
@@ -141,7 +142,7 @@ class GameRepository:
                         WHERE history.depth < %s
                     )
                     SELECT input_event_id, input_observation, input_outcome, model_call_id, action,
-                           rationale, output_event_id, output_observation, output_outcome
+                           rationale, output_event_id, output_observation, output_outcome, progress, input_progress
                     FROM history ORDER BY depth DESC
                     """,
                     (session_id, observation_event_id, limit),

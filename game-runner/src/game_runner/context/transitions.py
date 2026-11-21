@@ -20,3 +20,4 @@ class DecisionTransition:
     output_observation: Observation
     output_outcome: ObservationOutcome
     progress: dict | None = None
+    input_progress: dict | None = None
