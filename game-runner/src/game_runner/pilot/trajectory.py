@@ -2,8 +2,9 @@
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from statistics import median
 
-from game_runner.context.decision_support import MOVE_OFFSETS
+from game_runner.context.decision_support import MOVE_OFFSETS, NEIGHBORS_PREFIX
 from game_runner.context.progress import COMBAT, Position, movement_direction
 from game_runner.rule_feasibility.artifacts import FeasibilityError
 from game_runner.rule_feasibility.corpus import Corpus
@@ -233,11 +234,12 @@ def _trial_metrics(trial: dict, events: list[dict], rows: list[dict], reset: dic
     last_step = max((e["api_step"] for e in events if e["observation"] is not None), default=None)
     coverage = _coverage(rows, reset, last_step)
     usage = trial.get("model_usage", {})
-    return {
+    metrics = {
         **{key: trial.get(key) for key in (
             "trial_id", "ordinal", "requested_seed", "observed_reset_seed", "context_policy", "session_id",
             "episode_id", "outcome", "reason", "game_status", "max_observed_depth", "level_changes",
         )},
+        **{key: trial[key] for key in ("context_variant", "prompt_version") if key in trial},
         "action_dispatches": len(rows),
         "last_observed_api_step": last_step,
         "dispatch_outcomes": dict(Counter(row["outcome"] for row in rows)),
@@ -270,6 +272,17 @@ def _trial_metrics(trial: dict, events: list[dict], rows: list[dict], reset: dic
             for purpose in ("decision", "episode_summary")
         },
     }
+    if "context_variant" in trial:
+        decision_prompts = [
+            call["input_messages"][-1]["content"] for call in calls
+            if call["purpose"] == "decision" and call.get("input_messages")
+        ]
+        metrics["neighbors_prompt_exposure"] = {
+            "recorded_decision_prompts": len(decision_prompts),
+            "with_neighbors": sum(NEIGHBORS_PREFIX in prompt for prompt in decision_prompts),
+        }
+    return metrics
+
 
 
 def _matched_pairs(trials: list[dict]) -> list[dict]:
@@ -299,6 +312,60 @@ def _matched_pairs(trials: list[dict]) -> list[dict]:
     return pairs
 
 
+def _finished_for_comparison(trial: dict, horizon: int) -> bool:
+    step = trial["last_observed_api_step"]
+    if step is None or trial["coverage"]["positions"] == 0:
+        return False
+    if any(outcome != "succeeded" for outcome in trial["dispatch_outcomes"]):
+        return False
+    if trial["outcome"] == "ended":
+        return trial["game_status"] in {"dead", "won", "quit"}
+    return trial["outcome"] == "limited" and trial["reason"] == "trial_action_limit" and step == horizon
+
+
+def _variant_delta(reference: dict, other: dict, horizon: int) -> dict:
+    complete = _finished_for_comparison(reference, horizon) and _finished_for_comparison(other, horizon)
+    row = {
+        "seed": reference["requested_seed"], "baseline_trial_id": reference["trial_id"],
+        "comparison_trial_id": other["trial_id"], "complete": complete,
+        "positions_delta": None, "longest_no_new_position_move_run_delta": None,
+        "baseline_died": reference["game_status"] == "dead", "comparison_died": other["game_status"] == "dead",
+    }
+    if complete:
+        first, second = reference["coverage"], other["coverage"]
+        row.update(
+            positions_delta=second["positions"] - first["positions"],
+            longest_no_new_position_move_run_delta=(
+                second["longest_no_new_position_move_run"]["actions"]
+                - first["longest_no_new_position_move_run"]["actions"]
+            ),
+        )
+    return row
+
+
+def _neighbors_comparison(trials: list[dict], horizon: int) -> dict:
+    by_seed = defaultdict(list)
+    for trial in trials:
+        by_seed[trial["requested_seed"]].append(trial)
+    primary, repeats = [], []
+    for group in by_seed.values():
+        baseline, *replicates = [trial for trial in group if trial.get("context_variant", "baseline") == "baseline"]
+        neighbors, = [trial for trial in group if trial.get("context_variant") == "neighbors"]
+        primary.append(_variant_delta(baseline, neighbors, horizon))
+        repeats.extend(_variant_delta(baseline, trial, horizon) for trial in replicates)
+    complete = [pair for pair in primary if pair["complete"]]
+    return {
+        "action_horizon": horizon, "primary_pairs": primary, "baseline_repeats": repeats,
+        "complete_primary_pairs": len(complete),
+        "pairs_with_improved_coverage": sum(pair["positions_delta"] > 0 for pair in complete),
+        "median_primary_streak_delta": (
+            median(pair["longest_no_new_position_move_run_delta"] for pair in complete) if complete else None
+        ),
+        "baseline_deaths": sum(pair["baseline_died"] for pair in primary),
+        "neighbors_deaths": sum(pair["comparison_died"] for pair in primary),
+    }
+
+
 def analyze(corpus: Corpus) -> tuple[dict, list[dict]]:
     """Return trial metrics and one evidence-linked row per recorded dispatch."""
     events_by_trial = defaultdict(list)
@@ -315,7 +382,7 @@ def analyze(corpus: Corpus) -> tuple[dict, list[dict]]:
         rows, reset = _trial_rows(trial, events, corpus)
         trials.append(_trial_metrics(trial, events, rows, reset, calls_by_trial[trial_id]))
         ledger.extend(rows)
-    return {
+    metrics = {
         "schema_version": 1,
         "series_id": corpus.series_id,
         "split": corpus.manifest.split,
@@ -324,4 +391,7 @@ def analyze(corpus: Corpus) -> tuple[dict, list[dict]]:
         "action_dispatches": len(ledger),
         "trials": trials,
         "matched_seed_pairs": _matched_pairs(trials),
-    }, ledger
+    }
+    if any(trial.get("context_variant") == "neighbors" for trial in trials):
+        metrics["neighbors_comparison"] = _neighbors_comparison(trials, corpus.manifest.trial_limits.actions)
+    return metrics, ledger

@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import Field, model_validator
 
 from game_runner.clients.rogue import Observation
-from game_runner.context.decision_support import GROUNDING_INSTRUCTION, stair_sighting, visible_neighbors
+from game_runner.context.decision_support import GROUNDING_INSTRUCTION, neighbors_suffix, stair_sighting
 from game_runner.context.progress import movement_direction, visible_position
 from game_runner.decision import Decision, validate_mode
 from game_runner.pilot.manifest import ManifestModel
@@ -257,11 +257,10 @@ def freeze_context(corpus: Corpus, review_data: dict, repetitions: int = 2) -> d
             messages, treatments, evidence = _history(corpus, case, event, call, messages)
         else:
             _without_episode_memory(corpus, event, call, messages)
-            neighbors = canonical(visible_neighbors(observation.screen, position)).decode().rstrip("\n")
             treatments = {
                 "baseline": None,
                 "instruction": _variant(0, "\n\n" + GROUNDING_INSTRUCTION),
-                "neighbors": _variant(-1, "\nVisible neighbors (null means unknown): " + neighbors),
+                "neighbors": _variant(-1, neighbors_suffix(observation.screen, position)),
             }
             evidence = {}
         cases.append({

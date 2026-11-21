@@ -8,6 +8,7 @@ from langchain_core.messages import BaseMessage
 
 from game_runner.budget import TrialBudget
 from game_runner.clients.rogue import Observation
+from game_runner.config import ContextVariant
 from game_runner.context.budget import ContextLimitError, RETRY_RESERVE, count_messages
 from game_runner.context.compaction import SummaryUnavailable, compact_batch, evidence_rows, summary_messages
 from game_runner.context.memory import MemoryRevision
@@ -28,6 +29,7 @@ class ContextSettings:
     summary_token_budget: int = 8192
     summary_output_tokens: int = 1024
     summary_attempts: int = 2
+    context_variant: ContextVariant = "baseline"
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,7 @@ class ContextPlanner:
         def render(history, revision=None, uncovered=None):
             return build_messages(
                 observation, history, observation_outcome=outcome, progress=progress,
-                memory=revision, uncovered=uncovered,
+                memory=revision, uncovered=uncovered, context_variant=settings.context_variant,
             )
 
         def fits(messages):

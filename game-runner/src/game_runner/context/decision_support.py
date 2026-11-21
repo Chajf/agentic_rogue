@@ -1,7 +1,11 @@
 """Render decision cues from observations already available to the actor."""
 
+import json
+
 from .progress import Position
 
+
+NEIGHBORS_PREFIX = "\nVisible neighbors (null means unknown): "
 
 GROUNDING_INSTRUCTION = (
     "Before choosing a move, check which visible tile the direction targets. "
@@ -21,6 +25,10 @@ def visible_neighbors(screen: list[str], position: Position) -> dict[str, str | 
         glyph = screen[y][x] if 0 < y < len(screen) - 1 and 0 <= x < len(screen[y]) else " "
         neighbors[name] = glyph if glyph != " " else None
     return neighbors
+
+def neighbors_suffix(screen: list[str], position: Position) -> str:
+    neighbors = json.dumps(visible_neighbors(screen, position), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return NEIGHBORS_PREFIX + neighbors
 
 
 def stair_sighting(position: Position, event_id: int) -> str:

@@ -17,3 +17,6 @@ Semantic actions: MOVE_UP, MOVE_DOWN, MOVE_LEFT, MOVE_RIGHT, MOVE_UP_LEFT, MOVE_
 The observation's mode matters. In select_item mode, use a lowercase inventory letter or * to show the item list. In select_direction use a direction key; in select_hand use l or r. You may use semantic CANCEL in these selection modes. Direction keys are h left, j down, k up, l right, y up-left, u up-right, b down-left and n down-right. In confirm mode use semantic CONFIRM or CANCEL. A key action may also answer an inventory prompt. If the screen asks [Press return to continue], send key ENTER, even if mode is normal. Never use the shell-escape key !. The API consumes --More-- pages automatically.
 
 Return only a JSON object with keys action and rationale. action is either {"type":"semantic","action":"MOVE_UP"} with any required item, direction or hand fields, or {"type":"key","key":"a"}. rationale is a short explanation of the choice, at most 300 characters. Do not include markdown or private reasoning. Avoid QUIT unless continuing is impossible or the run is already lost."""
+
+def actor_prompt_version(context_variant: str) -> str:
+    return PROMPT_VERSION + "+neighbors-v1" if context_variant == "neighbors" else PROMPT_VERSION

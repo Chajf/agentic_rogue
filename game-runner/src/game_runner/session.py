@@ -18,7 +18,7 @@ from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.step import SessionInterrupted
 from game_runner.context.transitions import ObservationOutcome
 from game_runner.persistence.repository import GameRepository
-from game_runner.prompts.system import PROMPT_VERSION
+from game_runner.prompts.system import actor_prompt_version
 
 
 async def run_session(
@@ -28,7 +28,10 @@ async def run_session(
 ) -> str:
     if session_id is None:
         session_id = uuid4()
-        repository.create_session(session_id, settings.model_name, PROMPT_VERSION, context_policy=settings.context_policy)
+        repository.create_session(
+            session_id, settings.model_name, actor_prompt_version(settings.context_variant),
+            context_policy=settings.context_policy,
+        )
 
     def finish(status: str, error: str | None = None, *, reason: str | None = None) -> str:
         if on_finish is None:
@@ -113,6 +116,7 @@ async def run_session(
                     actor_output_tokens=settings.actor_output_tokens, policy=settings.context_policy,
                     summary_token_budget=settings.summary_context_token_budget,
                     summary_output_tokens=settings.summary_output_tokens, summary_attempts=settings.max_summary_attempts,
+                    context_variant=settings.context_variant,
                 ),
                 summary_model=summary_model,
                 budget=budget,

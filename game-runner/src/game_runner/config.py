@@ -3,7 +3,9 @@
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+ContextVariant = Literal["baseline", "neighbors"]
 
 
 @dataclass(frozen=True)
@@ -24,10 +26,15 @@ class Settings:
     summary_context_token_budget: int = 8192
     summary_output_tokens: int = 1024
     max_summary_attempts: int = 2
+    context_variant: ContextVariant = "baseline"
 
     def __post_init__(self) -> None:
         if self.context_policy not in {"history_only", "working_memory"}:
             raise ValueError("CONTEXT_POLICY must be history_only or working_memory")
+        if self.context_variant != "baseline" and (
+            self.context_variant != "neighbors" or self.context_policy != "history_only"
+        ):
+            raise ValueError("neighbors requires history_only")
         if self.summary_output_tokens <= 0 or self.summary_context_token_budget <= self.summary_output_tokens:
             raise ValueError("SUMMARY_CONTEXT_TOKEN_BUDGET must exceed positive SUMMARY_OUTPUT_TOKENS")
         if self.max_summary_attempts <= 0:

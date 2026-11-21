@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from game_runner.config import Settings
+from game_runner.config import ContextVariant, Settings
 
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
 Policy = Literal["history_only", "working_memory"]
@@ -47,6 +47,7 @@ class Trial(ManifestModel):
     trial_id: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$")]
     seed: Annotated[int, Field(strict=True, ge=0, le=2**32 - 1)]
     context_policy: Policy
+    context_variant: ContextVariant = "baseline"
 
 
 class Manifest(ManifestModel):
@@ -67,6 +68,14 @@ class Manifest(ManifestModel):
         ids = [trial.trial_id for trial in self.trials]
         if len(set(ids)) != len(ids):
             raise ValueError("trial IDs must be unique")
+        if any(trial.context_variant == "neighbors" for trial in self.trials):
+            if self.split != "development" or any(trial.context_policy != "history_only" for trial in self.trials):
+                raise ValueError("neighbor pilots require development and history_only for all trials")
+            by_seed: dict[int, list[ContextVariant]] = {}
+            for trial in self.trials:
+                by_seed.setdefault(trial.seed, []).append(trial.context_variant)
+            if any(group.count("neighbors") != 1 or "baseline" not in group for group in by_seed.values()):
+                raise ValueError("neighbor pilots require one neighbors trial and at least one baseline per seed")
         if self.split == "pilot_evaluation":
             pairs: dict[int, list[str]] = {}
             for trial in self.trials:
@@ -92,4 +101,5 @@ class Manifest(ManifestModel):
             model_kwargs=kwargs, history_recent_interactions=actor.history_interactions,
             context_policy=trial.context_policy, summary_context_token_budget=actor.summary_context_tokens,
             summary_output_tokens=actor.summary_output_tokens, max_summary_attempts=actor.max_summary_attempts,
+            context_variant=trial.context_variant,
         )

@@ -55,6 +55,7 @@ def load(directory: Path, split: str) -> Corpus:
             result["series_id"] == corpus.series_id and result["ordinal"] == index
             and result["trial_id"] == planned.trial_id and result["requested_seed"] == planned.seed
             and result["context_policy"] == planned.context_policy and result["outcome"] in FINAL_OUTCOMES
+            and result.get("context_variant", "baseline") == planned.context_variant
         )
         if not rule or result.get("split", split) != split:
             raise FeasibilityError("result does not match its manifest trial or split")

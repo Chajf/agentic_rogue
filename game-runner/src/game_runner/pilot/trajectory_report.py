@@ -52,6 +52,48 @@ def _usage_rows(trials: list[dict]):
             )
 
 
+def _variant_table(pairs: list[dict]) -> str:
+    return _table(
+        ("Seed", "Baseline trial", "Comparison trial", "Complete", "Δ positions", "Δ longest move streak"),
+        (
+            (pair["seed"], pair["baseline_trial_id"], pair["comparison_trial_id"],
+             "yes" if pair["complete"] else "no", pair["positions_delta"],
+             pair["longest_no_new_position_move_run_delta"])
+            for pair in pairs
+        ),
+    )
+
+
+def _neighbors_sections(comparison: dict, trials: list[dict]) -> list[str]:
+    complete = comparison["complete_primary_pairs"]
+    planned = len(comparison["primary_pairs"])
+    sections = [
+        "## Visible-neighbor pilot",
+        f"Action horizon {comparison['action_horizon']} · {complete}/{planned} complete primary pairs.",
+        f"Complete pairs with improved coverage · {comparison['pairs_with_improved_coverage']}. "
+        f"Median longest-streak difference {comparison['median_primary_streak_delta'] if complete else 'unavailable'}. "
+        f"Deaths in primary trials · baseline {comparison['baseline_deaths']}, "
+        f"neighbors {comparison['neighbors_deaths']}.",
+        "The first baseline in manifest order is the reference. Differences are comparison minus baseline. "
+        "Pairs with missing observations, uncertain dispatches, or technical stops remain in the table.",
+        _variant_table(comparison["primary_pairs"]),
+    ]
+    if comparison["baseline_repeats"]:
+        sections.extend(["### Baseline repeats", _variant_table(comparison["baseline_repeats"])])
+    sections.extend([
+        "### Prompt exposure",
+        _table(
+            ("Trial", "Variant", "Prompts with the neighbor block", "Recorded decision prompts"),
+            (
+                (trial["trial_id"], trial.get("context_variant", "baseline"),
+                 exposure["with_neighbors"], exposure["recorded_decision_prompts"])
+                for trial in trials if (exposure := trial.get("neighbors_prompt_exposure")) is not None
+            ),
+        ),
+    ])
+    return sections
+
+
 def _markdown(metrics: dict) -> str:
     trials = metrics["trials"]
     sections = [
@@ -106,6 +148,8 @@ def _markdown(metrics: dict) -> str:
                 ),
             ),
         ])
+    if comparison := metrics.get("neighbors_comparison"):
+        sections.extend(_neighbors_sections(comparison, trials))
     return "\n\n".join(sections) + "\n"
 
 

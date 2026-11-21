@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 
 from game_runner.persistence.database import connect
 from game_runner.pilot.manifest import Manifest, Trial
-from game_runner.prompts.system import PROMPT_VERSION
+from game_runner.prompts.system import actor_prompt_version
 
 
 class PilotError(RuntimeError):
@@ -63,7 +63,7 @@ def claim_trial(connection, manifest: Manifest, trial: Trial, session_id: UUID) 
         connection.execute(
             "INSERT INTO game_sessions(id, status, model_name, prompt_version, context_policy) "
             "VALUES (%s, 'starting', %s, %s, %s)",
-            (session_id, manifest.actor.model_name, PROMPT_VERSION, trial.context_policy),
+            (session_id, manifest.actor.model_name, actor_prompt_version(trial.context_variant), trial.context_policy),
         )
         updated = connection.execute(
             "UPDATE pilot_trials SET session_id = %s, outcome = 'running', started_at = now() "

@@ -155,7 +155,7 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
     trials = _rows(connection, """
         SELECT t.trial_id, t.ordinal, t.requested_seed, t.context_policy, t.session_id,
                t.outcome, t.reason, t.started_at, t.ended_at, s.episode_id,
-               s.seed AS observed_reset_seed, s.status AS game_status
+               s.seed AS observed_reset_seed, s.status AS game_status, s.prompt_version
         FROM pilot_trials t LEFT JOIN game_sessions s ON t.session_id = s.id
         WHERE t.series_id = %s ORDER BY t.ordinal
         """, (series_id,))
@@ -185,8 +185,10 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
             FROM episode_memory_revisions WHERE session_id = %s ORDER BY id
         """,
     }
+    variants = {trial["trial_id"]: trial.get("context_variant", "baseline") for trial in series["manifest"]["trials"]}
     with (directory / "results.jsonl").open("wb") as results, (directory / "trajectory.jsonl").open("wb") as trajectory:
         for trial in trials:
+            trial["context_variant"] = variants[trial["trial_id"]]
             identity = {"series_id": series_id, "trial_id": trial["trial_id"], "session_id": trial["session_id"]}
             source = {kind: _rows(connection, query, (trial["session_id"],)) if trial["session_id"] else []
                       for kind, query in queries.items()}

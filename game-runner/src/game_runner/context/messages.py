@@ -6,8 +6,10 @@ import json
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from game_runner.clients.rogue import Observation
+from game_runner.config import ContextVariant
+from game_runner.context.decision_support import neighbors_suffix
 from game_runner.context.memory import MemoryRevision
-from game_runner.context.progress import Progress
+from game_runner.context.progress import Progress, visible_position
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
 from game_runner.prompts.system import SYSTEM_INSTRUCTION
 
@@ -33,7 +35,7 @@ def build_messages(
     observation: Observation, history: list[DecisionTransition], *,
     observation_outcome: ObservationOutcome = "succeeded",
     progress: Progress | None = None, memory: MemoryRevision | None = None,
-    uncovered: list[dict] | None = None,
+    uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=SYSTEM_INSTRUCTION)]
     for transition in history:
@@ -58,5 +60,9 @@ def build_messages(
         current += "\nUncompacted episode evidence (oldest first): " + json.dumps(
             uncovered, ensure_ascii=False, separators=(",", ":"),
         )
+    if context_variant == "neighbors" and observation_outcome == "succeeded":
+        position = visible_position(observation)
+        if position is not None and (progress is None or progress.position == position):
+            current += neighbors_suffix(observation.screen, position)
     messages.append(HumanMessage(content=current))
     return messages
