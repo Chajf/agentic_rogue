@@ -1,3 +1,7 @@
+import json
+import subprocess
+import sys
+
 import pytest
 
 from game_runner.pilot.trajectory import analyze
@@ -146,9 +150,44 @@ def test_stairs_do_not_survive_a_recovery_gap(tmp_path):
     assert rows[1]["adjacent_stair_source_event_ids"] == []
 
 
+def test_descent_attempt_can_be_observed_without_a_position(tmp_path):
+    bundle = _bundle(tmp_path, "......", [(">", _step("......"))])
+    metrics, rows = analyze(load(bundle, "development"))
+    assert rows[0]["descent_attempt"]
+    assert metrics["trials"][0]["stairs"]["on_stairs_opportunities"] == 0
+
+
 def test_refuses_disagreement_between_dispatch_and_accepted_action(tmp_path):
     bundle = _bundle(tmp_path, ".@....", [("MOVE_RIGHT", _step("..@..."))])
     corpus = load(bundle, "development")
     corpus.calls[101]["parsed_action"] = {"type": "semantic", "action": "MOVE_LEFT"}
     with pytest.raises(FeasibilityError, match="differs from its accepted decision"):
         analyze(corpus)
+
+
+def test_cli_writes_repeatable_reports_and_preserves_existing_output(tmp_path, monkeypatch):
+    corpus = _bundle(tmp_path / "export", ".@....", [("MOVE_RIGHT", _step("..@..."))])
+    monkeypatch.delenv("MODEL_NAME", raising=False)
+    monkeypatch.delenv("MODEL_BASE_URL", raising=False)
+    command = [
+        sys.executable, "-m", "game_runner.pilot", "analyze", "--corpus", str(corpus), "--split", "development",
+    ]
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    subprocess.run([*command, "--output", str(first)], check=True, capture_output=True)
+    subprocess.run([*command, "--output", str(second)], check=True, capture_output=True)
+    assert sorted(path.name for path in first.iterdir()) == ["decision_ledger.jsonl", "report.md", "run_metrics.json"]
+    assert all(path.read_bytes() == (second / path.name).read_bytes() for path in first.iterdir())
+    ledger = (first / "decision_ledger.jsonl").read_text()
+    assert json.loads(ledger)["new_position"]
+    assert "## Matched seeds" in (first / "report.md").read_text()
+
+    duplicate = subprocess.run([*command, "--output", str(first)], capture_output=True, text=True)
+    assert duplicate.returncode != 0 and "already exists" in duplicate.stderr
+    assert (first / "decision_ledger.jsonl").read_text() == ledger
+
+    (corpus / "trajectory.jsonl").write_text("{}\n")
+    invalid = tmp_path / "invalid"
+    damaged = subprocess.run([*command, "--output", str(invalid)], capture_output=True, text=True)
+    assert damaged.returncode != 0 and "checksum mismatch" in damaged.stderr
+    assert not invalid.exists()

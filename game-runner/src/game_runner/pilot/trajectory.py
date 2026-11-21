@@ -103,7 +103,8 @@ def _decision_row(
     action = event["action_request"]
     if call is not None and call["parsed_action"] != action:
         raise FeasibilityError(f"action {event['id']} differs from its accepted decision")
-    direction = movement_direction(action) if action and input_map else None
+    input_is_map = before is not None and before["observation"]["mode"] == "normal"
+    direction = movement_direction(action) if action and input_is_map else None
     target = input_map.target(direction) if direction and input_map else None
     comparable = (
         direction is not None and input_map is not None and output_map is not None
@@ -129,7 +130,7 @@ def _decision_row(
         and previous["input_location"] == output_map.location()
     )
     stair_source, adjacent_sources = stairs.nearby(input_map)
-    descend = bool(input_map and action and (action.get("action") == "DESCEND" or action.get("key") == ">"))
+    descend = bool(action and (action.get("action") == "DESCEND" or (input_is_map and action.get("key") == ">")))
     return {
         "trial_id": event["trial_id"],
         "call_id": call["id"] if call else None,
