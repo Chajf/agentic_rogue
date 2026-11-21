@@ -19,6 +19,7 @@ class ModelSettings(ManifestModel):
     model_name: Annotated[str, Field(min_length=1)]
     temperature: Annotated[float, Field(ge=0, le=2, allow_inf_nan=False)] = 0
     output_tokens: PositiveInt = 2048
+    reasoning_enabled: bool | None = None
     input_usd_per_million: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
     output_usd_per_million: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
 
@@ -84,8 +85,11 @@ def provider(settings: ModelSettings):
 
     runtime = json.loads(os.getenv("MODEL_KWARGS", "{}"))
     headers = {"default_headers": runtime["default_headers"]} if "default_headers" in runtime else {}
+    reasoning = {} if settings.reasoning_enabled is None else {
+        "extra_body": {"reasoning": {"enabled": settings.reasoning_enabled}},
+    }
     return init_chat_model(
         settings.model_name, model_provider="openai", base_url=os.environ["MODEL_BASE_URL"],
         api_key=os.getenv("MODEL_API_KEY", "local"), temperature=settings.temperature,
-        max_tokens=settings.output_tokens, max_retries=0, **headers,
+        max_tokens=settings.output_tokens, max_retries=0, **headers, **reasoning,
     )

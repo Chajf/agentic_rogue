@@ -39,11 +39,22 @@ def validate_candidate(value, case: dict) -> Candidate:
     return candidate
 
 
-async def extract(corpus: Corpus, cases: dict, cases_digest: str, run: AnalysisRun | None) -> dict:
+async def extract(
+    corpus: Corpus, cases: dict, cases_digest: str, run: AnalysisRun | None,
+    *, selection: list[str] | None = None,
+) -> dict:
+    selected = set(selection) if selection is not None else None
+    if selected is not None and (
+        len(selected) != len(selection) or selected - {case["case_id"] for case in cases["cases"]}
+    ):
+        raise FeasibilityError("extraction selection contains duplicate or unknown case IDs")
     results = []
     schema = canonical(Candidate.model_json_schema()).decode()
     for case in cases["cases"]:
         identity = {"candidate_id": case["case_id"], "case_id": case["case_id"]}
+        if selected is not None and case["case_id"] not in selected:
+            results.append({**identity, "status": "unstarted", "reason": "not_selected"})
+            continue
         if run is None or not run.available():
             results.append({**identity, "status": "unstarted", "reason": "extraction_disabled_or_budget"})
             continue
@@ -71,5 +82,6 @@ async def extract(corpus: Corpus, cases: dict, cases_digest: str, run: AnalysisR
     return {
         "kind": "candidates", "cases_sha256": cases_digest, "corpus_sha256": corpus.sha256,
         "split": cases["split"], "origin": cases["origin"], "candidates": results,
+        "selected_case_ids": selection,
         "analysis": run.provenance() if run else {"calls": []},
     }

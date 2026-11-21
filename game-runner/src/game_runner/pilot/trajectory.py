@@ -3,21 +3,12 @@
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
+from game_runner.context.decision_support import MOVE_OFFSETS
 from game_runner.context.progress import COMBAT, Position, movement_direction
 from game_runner.rule_feasibility.artifacts import FeasibilityError
 from game_runner.rule_feasibility.corpus import Corpus
 
 CHECKPOINTS = (25, 50, 100, 200)
-MOVE_OFFSETS = {
-    "UP": (-1, 0),
-    "DOWN": (1, 0),
-    "LEFT": (0, -1),
-    "RIGHT": (0, 1),
-    "UP_LEFT": (-1, -1),
-    "UP_RIGHT": (-1, 1),
-    "DOWN_LEFT": (1, -1),
-    "DOWN_RIGHT": (1, 1),
-}
 WALLS = {"-", "|"}
 TERRAIN_WITHOUT_STAIRS = WALLS | {".", "#", "+"}
 

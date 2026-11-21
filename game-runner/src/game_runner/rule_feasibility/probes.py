@@ -236,7 +236,7 @@ async def probe(frozen: dict, frozen_digest: str, run: AnalysisRun | None) -> di
         raise FeasibilityError("unsupported frozen probe prompt version")
     if frozen.get("approval") != "human_review":
         raise FeasibilityError("probe requires a human-approved frozen specification")
-    if run and frozen["actor"] != run.settings.model_dump(mode="json"):
+    if run and ModelSettings.model_validate(frozen["actor"]) != run.settings:
         raise FeasibilityError("probe actor configuration must match the frozen specification")
     results = []
     for case in frozen["probes"]:
