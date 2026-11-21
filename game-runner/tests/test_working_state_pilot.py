@@ -62,7 +62,8 @@ def test_bad_state_combinations_fail_at_manifest_validation(field, value):
         Manifest.model_validate(payload)
 
 
-async def test_runtime_withholds_recovered_map_then_resumes_from_a_confirmed_frame():
+@pytest.mark.parametrize("history_format", ["replay", "compact"])
+async def test_runtime_withholds_recovered_map_then_resumes_from_a_confirmed_frame(history_format):
     reset = frame(".@%.", "....")
     recovered = frame("..@.", "....").model_copy(update={"api_step": 1})
     confirmed = recovered.model_copy(update={"api_step": 2})
@@ -79,7 +80,10 @@ async def test_runtime_withholds_recovered_map_then_resumes_from_a_confirmed_fra
     client.initial = reset
     repo = FakeRepository()
     model = FakeModel("bad JSON", REST, REST, REST)
-    settings = replace(RUNTIME, game_seed=reset.seed, prompt_profile="rules-v2", structured_state="map-v1")
+    settings = replace(
+        RUNTIME, game_seed=reset.seed, prompt_profile="rules-v2", structured_state="map-v1",
+        history_format=history_format,
+    )
 
     assert await run_session(settings, repo, model=model, client=client) == "limit_reached"
 
@@ -92,6 +96,12 @@ async def test_runtime_withholds_recovered_map_then_resumes_from_a_confirmed_fra
     view = json.loads(resumed.splitlines()[-1])
     assert view["landmarks"] == [] and view["recent_attempts"] == []
     assert view["through_event_id"] == 3
+    assert repo.calls[2]["history_window"]["eligible_output_event_ids"] == []
+    assert repo.calls[3]["history_window"]["eligible_output_event_ids"] == [3]
+    assert repo.calls[3]["history_window"]["delivered_output_event_ids"] == [3]
+    if history_format == "compact":
+        assert "History boundary at API step 1." in resumed
+        assert "action effect uncertain" in resumed
     reset_delta, gap, next_confirmed, _ = [event["progress"][DELTA_KEY] for event in repo.events]
     assert reset_delta["visit"]["count"] == next_confirmed["visit"]["count"] == 1
     assert gap["gap"] == "action_response_lost" and gap["attempt"]["to"] is None
