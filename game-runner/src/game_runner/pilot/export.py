@@ -185,10 +185,12 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
             FROM episode_memory_revisions WHERE session_id = %s ORDER BY id
         """,
     }
-    variants = {trial["trial_id"]: trial.get("context_variant", "baseline") for trial in series["manifest"]["trials"]}
+    planned_trials = {trial["trial_id"]: trial for trial in series["manifest"]["trials"]}
     with (directory / "results.jsonl").open("wb") as results, (directory / "trajectory.jsonl").open("wb") as trajectory:
         for trial in trials:
-            trial["context_variant"] = variants[trial["trial_id"]]
+            planned = planned_trials[trial["trial_id"]]
+            trial["context_variant"] = planned.get("context_variant", "baseline")
+            trial["prompt_profile"] = planned.get("prompt_profile", "legacy")
             identity = {"series_id": series_id, "trial_id": trial["trial_id"], "session_id": trial["session_id"]}
             source = {kind: _rows(connection, query, (trial["session_id"],)) if trial["session_id"] else []
                       for kind, query in queries.items()}

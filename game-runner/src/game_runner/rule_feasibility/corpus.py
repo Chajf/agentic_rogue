@@ -56,6 +56,7 @@ def load(directory: Path, split: str) -> Corpus:
             and result["trial_id"] == planned.trial_id and result["requested_seed"] == planned.seed
             and result["context_policy"] == planned.context_policy and result["outcome"] in FINAL_OUTCOMES
             and result.get("context_variant", "baseline") == planned.context_variant
+            and result.get("prompt_profile", "legacy") == planned.prompt_profile
         )
         if not rule or result.get("split", split) != split:
             raise FeasibilityError("result does not match its manifest trial or split")

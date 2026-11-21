@@ -16,6 +16,7 @@ from game_runner.context.progress import Progress
 from game_runner.decision import parse_decision
 from game_runner.graph.state import StepState
 from game_runner.persistence.repository import GameRepository
+from game_runner.prompts.decision_retry import DECISION_RETRY_INSTRUCTION
 
 
 class DecisionValidationError(RuntimeError):
@@ -105,7 +106,7 @@ def make_nodes(
             # Keep retry feedback bounded. The complete rejected reply remains
             # in the audit record and cannot grow the next request.
             base = state["base_messages"]
-            feedback = "The previous response failed validation. Return one valid JSON object only."
+            feedback = DECISION_RETRY_INSTRUCTION
             if _fits_retry(model, base, feedback + " " + error):
                 feedback += " " + error
             retry = [*base[:-1], HumanMessage(content=base[-1].content + "\n" + feedback)]

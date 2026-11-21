@@ -29,7 +29,8 @@ async def run_session(
     if session_id is None:
         session_id = uuid4()
         repository.create_session(
-            session_id, settings.model_name, actor_prompt_version(settings.context_variant),
+            session_id, settings.model_name,
+            actor_prompt_version(settings.context_variant, prompt_profile=settings.prompt_profile),
             context_policy=settings.context_policy,
         )
 
@@ -116,7 +117,7 @@ async def run_session(
                     actor_output_tokens=settings.actor_output_tokens, policy=settings.context_policy,
                     summary_token_budget=settings.summary_context_token_budget,
                     summary_output_tokens=settings.summary_output_tokens, summary_attempts=settings.max_summary_attempts,
-                    context_variant=settings.context_variant,
+                    context_variant=settings.context_variant, prompt_profile=settings.prompt_profile,
                 ),
                 summary_model=summary_model,
                 budget=budget,

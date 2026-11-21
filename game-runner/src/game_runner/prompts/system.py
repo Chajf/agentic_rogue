@@ -1,4 +1,10 @@
-"""Stable instruction for the first Rogue-playing agent."""
+"""Versioned system instructions for the Rogue actor."""
+
+from typing import Literal, NamedTuple
+
+from game_runner.prompts.rules_v2 import RULES_V2_INSTRUCTION
+
+PromptProfile = Literal["legacy", "rules-v2"]
 
 PROMPT_VERSION = "rogue-v1.3"
 
@@ -18,5 +24,18 @@ The observation's mode matters. In select_item mode, use a lowercase inventory l
 
 Return only a JSON object with keys action and rationale. action is either {"type":"semantic","action":"MOVE_UP"} with any required item, direction or hand fields, or {"type":"key","key":"a"}. rationale is a short explanation of the choice, at most 300 characters. Do not include markdown or private reasoning. Avoid QUIT unless continuing is impossible or the run is already lost."""
 
-def actor_prompt_version(context_variant: str) -> str:
-    return PROMPT_VERSION + "+neighbors-v1" if context_variant == "neighbors" else PROMPT_VERSION
+
+class ActorPrompt(NamedTuple):
+    version: str
+    instruction: str
+
+
+ACTOR_PROMPTS: dict[PromptProfile, ActorPrompt] = {
+    "legacy": ActorPrompt(PROMPT_VERSION, SYSTEM_INSTRUCTION),
+    "rules-v2": ActorPrompt("rules-v2", RULES_V2_INSTRUCTION),
+}
+
+
+def actor_prompt_version(context_variant: str, *, prompt_profile: PromptProfile = "legacy") -> str:
+    version = ACTOR_PROMPTS[prompt_profile].version
+    return version + "+neighbors-v1" if context_variant == "neighbors" else version

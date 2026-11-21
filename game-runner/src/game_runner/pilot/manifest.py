@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from game_runner.config import ContextVariant, Settings
+from game_runner.prompts.system import PromptProfile
 
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
 Policy = Literal["history_only", "working_memory"]
@@ -48,6 +49,7 @@ class Trial(ManifestModel):
     seed: Annotated[int, Field(strict=True, ge=0, le=2**32 - 1)]
     context_policy: Policy
     context_variant: ContextVariant = "baseline"
+    prompt_profile: PromptProfile = "legacy"
 
 
 class Manifest(ManifestModel):
@@ -68,6 +70,10 @@ class Manifest(ManifestModel):
         ids = [trial.trial_id for trial in self.trials]
         if len(set(ids)) != len(ids):
             raise ValueError("trial IDs must be unique")
+        if any(trial.prompt_profile == "rules-v2" and (
+            self.split != "development" or trial.context_policy != "history_only" or trial.context_variant != "baseline"
+        ) for trial in self.trials):
+            raise ValueError("rules-v2 trials require development, history_only, and the baseline context variant")
         if any(trial.context_variant == "neighbors" for trial in self.trials):
             if self.split != "development" or any(trial.context_policy != "history_only" for trial in self.trials):
                 raise ValueError("neighbor pilots require development and history_only for all trials")
@@ -101,5 +107,5 @@ class Manifest(ManifestModel):
             model_kwargs=kwargs, history_recent_interactions=actor.history_interactions,
             context_policy=trial.context_policy, summary_context_token_budget=actor.summary_context_tokens,
             summary_output_tokens=actor.summary_output_tokens, max_summary_attempts=actor.max_summary_attempts,
-            context_variant=trial.context_variant,
+            context_variant=trial.context_variant, prompt_profile=trial.prompt_profile,
         )

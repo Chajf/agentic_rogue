@@ -53,9 +53,9 @@ def main() -> None:
         ).strip()
         if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
             raise PilotError("runner revision must be a full Git SHA")
-        # The manifest supplies inference settings, including the model name.
+        # The manifest supplies inference settings, including the model name and prompt profile.
         os.environ["MODEL_NAME"] = manifest.actor.model_name
-        runtime = Settings.from_env()
+        runtime = Settings.from_env(prompt_profile="legacy")
         migrate()
         reason = asyncio.run(run_series(manifest, runtime, binary=binary.resolve(), revision=revision))
         print(f"series {manifest.series_id} ended with {reason}")
