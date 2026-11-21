@@ -63,7 +63,11 @@ def claim_trial(connection, manifest: Manifest, trial: Trial, session_id: UUID) 
         connection.execute(
             "INSERT INTO game_sessions(id, status, model_name, prompt_version, context_policy) "
             "VALUES (%s, 'starting', %s, %s, %s)",
-            (session_id, manifest.actor.model_name, actor_prompt_version(trial.context_variant), trial.context_policy),
+            (
+                session_id, manifest.actor.model_name,
+                actor_prompt_version(trial.context_variant, prompt_profile=trial.prompt_profile),
+                trial.context_policy,
+            ),
         )
         updated = connection.execute(
             "UPDATE pilot_trials SET session_id = %s, outcome = 'running', started_at = now() "

@@ -16,6 +16,7 @@ from game_runner.context.messages import build_messages
 from game_runner.context.progress import Progress
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
 from game_runner.persistence.repository import GameRepository
+from game_runner.prompts.system import PromptProfile
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class ContextSettings:
     summary_output_tokens: int = 1024
     summary_attempts: int = 2
     context_variant: ContextVariant = "baseline"
+    prompt_profile: PromptProfile = "legacy"
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class ContextPlanner:
             return build_messages(
                 observation, history, observation_outcome=outcome, progress=progress,
                 memory=revision, uncovered=uncovered, context_variant=settings.context_variant,
+                prompt_profile=settings.prompt_profile,
             )
 
         def fits(messages):

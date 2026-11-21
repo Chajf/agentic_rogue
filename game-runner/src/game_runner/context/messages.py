@@ -11,7 +11,7 @@ from game_runner.context.decision_support import neighbors_suffix
 from game_runner.context.memory import MemoryRevision
 from game_runner.context.progress import Progress, visible_position
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
-from game_runner.prompts.system import SYSTEM_INSTRUCTION
+from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
 
 
 def _observation_text(
@@ -36,8 +36,9 @@ def build_messages(
     observation_outcome: ObservationOutcome = "succeeded",
     progress: Progress | None = None, memory: MemoryRevision | None = None,
     uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
+    prompt_profile: PromptProfile = "legacy",
 ) -> list[BaseMessage]:
-    messages: list[BaseMessage] = [SystemMessage(content=SYSTEM_INSTRUCTION)]
+    messages: list[BaseMessage] = [SystemMessage(content=ACTOR_PROMPTS[prompt_profile].instruction)]
     for transition in history:
         messages.extend((
             HumanMessage(content=_observation_text(transition.input_observation, transition.input_outcome)),

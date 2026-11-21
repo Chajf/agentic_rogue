@@ -77,3 +77,14 @@ def test_rejects_invalid_context_settings(model_env, monkeypatch, key, value):
     monkeypatch.setenv(key, value)
     with pytest.raises(ValueError, match=key):
         Settings.from_env()
+
+
+def test_prompt_profile_from_env(model_env, monkeypatch):
+    monkeypatch.delenv("PROMPT_PROFILE", raising=False)
+    assert Settings.from_env().prompt_profile == "legacy"
+    monkeypatch.setenv("PROMPT_PROFILE", "rules-v2")
+    assert Settings.from_env().prompt_profile == "rules-v2"
+    assert Settings.from_env(prompt_profile="legacy").prompt_profile == "legacy"
+    monkeypatch.setenv("PROMPT_PROFILE", "other")
+    with pytest.raises(ValueError, match="PROMPT_PROFILE"):
+        Settings.from_env()

@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
+
 ContextVariant = Literal["baseline", "neighbors"]
 
 
@@ -27,8 +29,11 @@ class Settings:
     summary_output_tokens: int = 1024
     max_summary_attempts: int = 2
     context_variant: ContextVariant = "baseline"
+    prompt_profile: PromptProfile = "legacy"
 
     def __post_init__(self) -> None:
+        if self.prompt_profile not in ACTOR_PROMPTS:
+            raise ValueError("PROMPT_PROFILE must be legacy or rules-v2")
         if self.context_policy not in {"history_only", "working_memory"}:
             raise ValueError("CONTEXT_POLICY must be history_only or working_memory")
         if self.context_variant != "baseline" and (
@@ -49,7 +54,7 @@ class Settings:
         return caps[0] if caps else 512
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls, *, prompt_profile: PromptProfile | None = None) -> "Settings":
         seed = os.getenv("GAME_SEED", "").strip()
         try:
             model_kwargs = json.loads(os.getenv("MODEL_KWARGS", "").strip() or "{}")
@@ -82,6 +87,7 @@ class Settings:
             summary_context_token_budget=int(os.getenv("SUMMARY_CONTEXT_TOKEN_BUDGET", "8192")),
             summary_output_tokens=int(os.getenv("SUMMARY_OUTPUT_TOKENS", "1024")),
             max_summary_attempts=int(os.getenv("MAX_SUMMARY_ATTEMPTS", "2")),
+            prompt_profile=prompt_profile if prompt_profile is not None else os.getenv("PROMPT_PROFILE", "legacy"),
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

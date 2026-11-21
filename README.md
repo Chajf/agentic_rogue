@@ -24,6 +24,9 @@ docker compose run --rm --build \
   -e 'MODEL_KWARGS={"extra_body":{"reasoning":{"enabled":false}}}' game-runner
 ```
 
+Set `PROMPT_PROFILE=rules-v2` for a standalone episode with the versioned
+Rogue guide. The default profile is `legacy` (`rogue-v1.3`).
+
 ## Sequential pilot
 
 Install both workspace packages and build Rogue from the source revision in
@@ -45,6 +48,13 @@ For an OpenRouter model that supports disabling reasoning, set
 `actor.reasoning_enabled` to `false`. The manifest records the setting and the
 runner applies it to decisions and episode summaries in both policies. Omit it
 to use the provider default.
+
+Each trial may specify `prompt_profile`. Use `"prompt_profile": "rules-v2"`
+with `history_only` and the default context variant in a development manifest.
+For a prompt-only comparison, pair it with a matching legacy trial on the same
+seed. The manifest supplies the profile for pilot runs, and omitted fields use
+`legacy`. The export records the planned profile and the prompt version of each
+started session.
 
 For DeepSeek V4.1 Flash on OpenRouter, a matched development smoke run reached
 12 actions per policy with reasoning disabled and both `actor.context_tokens`
