@@ -122,3 +122,18 @@ def test_history_format_from_env(model_env, monkeypatch):
     monkeypatch.setenv("HISTORY_FORMAT", "other")
     with pytest.raises(ValueError, match="HISTORY_FORMAT"):
         Settings.from_env()
+
+
+def test_goal_management_from_env(model_env, monkeypatch):
+    monkeypatch.setenv("PROMPT_PROFILE", "legacy")
+    monkeypatch.setenv("CONTEXT_POLICY", "history_only")
+    monkeypatch.setenv("STRUCTURED_STATE", "off")
+    monkeypatch.setenv("HISTORY_FORMAT", "replay")
+    monkeypatch.delenv("GOAL_MANAGEMENT", raising=False)
+    assert Settings.from_env().goal_management == "off"
+    monkeypatch.setenv("GOAL_MANAGEMENT", "managed-v1")
+    with pytest.raises(ValueError, match="managed-v1 requires map-v1"):
+        Settings.from_env()
+    monkeypatch.setenv("PROMPT_PROFILE", "rules-v2")
+    monkeypatch.setenv("STRUCTURED_STATE", "map-v1")
+    assert Settings.from_env().goal_management == "managed-v1"

@@ -59,6 +59,7 @@ def load(directory: Path, split: str) -> Corpus:
             and result.get("prompt_profile", "legacy") == planned.prompt_profile
             and result.get("structured_state", "off") == planned.structured_state
             and result.get("history_format", "replay") == planned.history_format
+            and result.get("goal_management", "off") == planned.goal_management
         )
         if not rule or result.get("split", split) != split:
             raise FeasibilityError("result does not match its manifest trial or split")
@@ -104,6 +105,12 @@ def _validate_links(corpus: Corpus) -> None:
             if (str(observation.episode_id) != trial["episode_id"] or observation.api_step != event["api_step"]
                     or observation.seed != trial["observed_reset_seed"]):
                 raise FeasibilityError("observation does not match its recorded episode, step, or seed")
+        progress = event.get("progress") or {}
+        if (review := progress.get("goal_review")) is not None:
+            _validate_goal_review(corpus, event, review)
+        if (transition := progress.get("goal_transition")) is not None:
+            for ref in transition["pending_review"].values():
+                _validate_goal_reference(corpus, event, ref)
         if event["model_call_id"] is not None:
             call = same_trial(calls, event["model_call_id"], event)
             if call["status"] != "valid" or call["purpose"] != "decision":
@@ -113,12 +120,36 @@ def _validate_links(corpus: Corpus) -> None:
             before = same_trial(events, call["observation_event_id"], event)
             if before["observation"] is None or before["outcome"] not in {"succeeded", "uncertain"}:
                 raise FeasibilityError("action must link to an available input observation")
+    introduced_goals: dict[tuple[str, int], tuple[int, int]] = {}
     for call in calls.values():
         if call["observation_event_id"] is not None:
             same_trial(events, call["observation_event_id"], call)
         if call["memory_revision_id"] is not None:
             same_trial(revisions, call["memory_revision_id"], call)
         _validate_history_window(corpus, call)
+        if call["purpose"] == "goal_selection":
+            if call["parsed_action"] is not None or call.get("decision_metadata") is None:
+                raise FeasibilityError("goal selection requires review metadata and cannot carry an action")
+            event = same_trial(events, call["observation_event_id"], call)
+            metadata = call["decision_metadata"]
+            _validate_goal_review(corpus, event, metadata)
+            if call["status"] == "valid" and (goal := metadata["selection"]["goal"]) is not None:
+                key = (call["trial_id"], goal["id"])
+                source = (event["id"], call["id"])
+                introduced_goals[key] = min(introduced_goals.get(key, source), source)
+
+    for call in calls.values():
+        if call["purpose"] == "decision" and (goal_id := (call.get("decision_metadata") or {}).get("active_goal_id")) is not None:
+            source = introduced_goals.get((call["trial_id"], goal_id)) if type(goal_id) is int else None
+            boundary = call["observation_event_id"], call["id"]
+            if source is None or boundary[0] is None or source >= boundary:
+                raise FeasibilityError("actor goal has no preceding selection in the same session")
+    for event in events.values():
+        transition = (event.get("progress") or {}).get("goal_transition") or {}
+        if (goal_id := transition.get("goal_id")) is not None:
+            source = introduced_goals.get((event["trial_id"], goal_id)) if type(goal_id) is int else None
+            if source is None or source[0] >= event["id"]:
+                raise FeasibilityError("goal transition has no preceding selection in the same session")
     for revision in revisions.values():
         boundary = same_trial(events, revision["through_event_id"], revision)
         call = same_trial(calls, revision["model_call_id"], revision)
@@ -131,6 +162,46 @@ def _validate_links(corpus: Corpus) -> None:
         for gap in revision["gap_event_ids"]:
             if same_trial(events, gap, revision)["outcome"] != "uncertain" or gap > boundary["id"]:
                 raise FeasibilityError("invalid revision gap reference")
+
+
+def _validate_goal_reference(corpus: Corpus, boundary: dict, ref: int) -> None:
+    if type(ref) is not int or ref > boundary["id"] or same_trial(corpus.events, ref, boundary)["observation"] is None:
+        raise FeasibilityError("goal evidence is outside its observation boundary")
+
+
+def _validate_goal_review(corpus: Corpus, boundary: dict, review: dict) -> None:
+    trial = corpus.trials[boundary["trial_id"]]
+    if (
+        not isinstance(review, dict) or trial.get("goal_management") != "managed-v1"
+        or review.get("observation_event_id") != boundary["id"] or boundary["outcome"] != "succeeded"
+        or boundary["observation"] is None or boundary["observation"]["mode"] != "normal"
+        or review.get("map_instance") != (boundary.get("progress") or {}).get("map_event_id")
+    ):
+        raise FeasibilityError("goal review requires a confirmed map observation in a managed trial")
+    if (call_id := review.get("selector_call_id")) is not None:
+        call = same_trial(corpus.calls, call_id, boundary)
+        if call["purpose"] != "goal_selection" or call["observation_event_id"] != boundary["id"]:
+            raise FeasibilityError("goal review does not match its selector call")
+    _validate_goal_reference(corpus, boundary, review["map_instance"])
+    for ref in review["reasons"].values():
+        _validate_goal_reference(corpus, boundary, ref)
+    for candidate in review["candidates"]:
+        _validate_goal_reference(corpus, boundary, candidate["source_event_id"])
+    selection = review.get("selection") or {}
+    chosen = selection.get("goal")
+    if selection.get("choice") in {"select", "propose"} and (
+        not isinstance(chosen, dict) or chosen.get("map_instance") != review["map_instance"]
+        or chosen.get("observation_event_id") != boundary["id"]
+    ):
+        raise FeasibilityError("new goal does not match the selector's map and observation")
+    for goal in (review.get("goal_before"), chosen, selection.get("superseded")):
+        if goal is not None:
+            if type(goal.get("id")) is not int or goal["id"] <= 0:
+                raise FeasibilityError("invalid goal identifier")
+            _validate_goal_reference(corpus, boundary, goal["map_instance"])
+            _validate_goal_reference(corpus, boundary, goal["observation_event_id"])
+            if goal["source_event_id"] is not None:
+                _validate_goal_reference(corpus, boundary, goal["source_event_id"])
 
 
 def _validate_history_window(corpus: Corpus, call: dict) -> None:

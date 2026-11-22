@@ -11,7 +11,7 @@ from game_runner.context.messages import build_messages
 from game_runner.context.planning import ContextPlanner, ContextSettings
 from game_runner.context.progress import Progress
 from game_runner.graph.builder import build_graph
-from game_runner.graph.nodes.step import DecisionValidationError
+from game_runner.graph.nodes.actor import DecisionValidationError
 from game_runner.persistence.repository import DecisionTransition
 
 from test_agent_graph import FakeClient, FakeModel, FakeRepository, input_state, observed

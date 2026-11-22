@@ -1,5 +1,6 @@
 """Write-ahead records for model calls and Rogue API requests."""
 
+from typing import Literal
 from uuid import UUID
 
 from psycopg.rows import dict_row
@@ -41,15 +42,16 @@ class GameRepository:
         self, session_id: UUID, input_messages: list[dict], *, observation_event_id: int,
         purpose: str = "decision", memory_revision_id: int | None = None,
         input_token_count: int | None = None, input_token_count_method: str | None = None,
-        history_window: HistoryWindow | None = None,
+        history_window: HistoryWindow | None = None, decision_metadata: dict | None = None,
     ) -> int:
         with connect() as connection:
             row = connection.execute(
                 "INSERT INTO model_calls(session_id, input_messages, observation_event_id, purpose, "
-                "memory_revision_id, input_token_count, input_token_count_method, history_window, status) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING id",
+                "memory_revision_id, input_token_count, input_token_count_method, history_window, decision_metadata, status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING id",
                 (session_id, Jsonb(input_messages), observation_event_id, purpose, memory_revision_id,
-                 input_token_count, input_token_count_method, Jsonb(history_window) if history_window is not None else None),
+                 input_token_count, input_token_count_method, Jsonb(history_window) if history_window is not None else None,
+                 Jsonb(decision_metadata) if decision_metadata is not None else None),
             ).fetchone()
             assert row is not None
             return row[0]
@@ -58,20 +60,20 @@ class GameRepository:
         self, call_id: int, status: str, *, raw_response: dict | None = None,
         parsed_action: dict | None = None, decision_rationale: str | None = None,
         validation_error: str | None = None, response_metadata: dict | None = None,
-        usage_metadata: dict | None = None, duration_ms: int | None = None,
+        usage_metadata: dict | None = None, duration_ms: int | None = None, decision_metadata: dict | None = None,
     ) -> None:
         with connect() as connection:
             connection.execute(
                 "UPDATE model_calls SET status = %s, raw_response = %s, parsed_action = %s, "
                 "decision_rationale = %s, validation_error = %s, response_metadata = %s, "
-                "usage_metadata = %s, duration_ms = %s WHERE id = %s",
+                "usage_metadata = %s, duration_ms = %s, decision_metadata = COALESCE(%s, decision_metadata) WHERE id = %s",
                 (
                     status, Jsonb(raw_response) if raw_response is not None else None,
                     Jsonb(parsed_action) if parsed_action is not None else None,
                     decision_rationale, validation_error,
                     Jsonb(response_metadata) if response_metadata is not None else None,
                     Jsonb(usage_metadata) if usage_metadata is not None else None,
-                    duration_ms, call_id,
+                    duration_ms, Jsonb(decision_metadata) if decision_metadata is not None else None, call_id,
                 ),
             )
 
@@ -106,6 +108,18 @@ class GameRepository:
                     error, Jsonb(progress) if progress is not None else None, event_id,
                 ),
             )
+
+    def record_goal_audit(
+        self, session_id: UUID, event_id: int, field: Literal["goal_review", "goal_transition"], metadata: dict,
+    ) -> None:
+        with connect() as connection:
+            result = connection.execute(
+                "UPDATE game_events SET progress = jsonb_set(COALESCE(progress, '{}'::jsonb), ARRAY[%s::text], %s) "
+                "WHERE session_id = %s AND id = %s AND observation IS NOT NULL",
+                (field, Jsonb(metadata), session_id, event_id),
+            )
+            if result.rowcount != 1:
+                raise ValueError("goal audit requires a saved observation in the same session")
 
     def recent_transitions(
         self, session_id: UUID, observation_event_id: int, limit: int,

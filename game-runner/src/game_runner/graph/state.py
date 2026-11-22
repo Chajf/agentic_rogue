@@ -6,6 +6,7 @@ from uuid import UUID
 from langchain_core.messages import AIMessage, BaseMessage
 
 from game_runner.clients.rogue import ActionRequest, KeyActionRequest, Observation
+from game_runner.context.goal_loop import GoalLoop, GoalReview
 from game_runner.context.progress import Progress
 from game_runner.context.transitions import HistoryWindow, ObservationOutcome
 from game_runner.context.working_state import WorkingState
@@ -23,6 +24,9 @@ class StepState(TypedDict):
     history_window: NotRequired[HistoryWindow | None]
     progress: NotRequired[Progress]
     working_state: NotRequired[WorkingState | None]
+    goal_loop: NotRequired[GoalLoop | None]
+    goal_review: NotRequired[GoalReview | None]
+    request_goal_review: NotRequired[bool]
     response: NotRequired[AIMessage]
     call_id: NotRequired[int]
     duration_ms: NotRequired[int]

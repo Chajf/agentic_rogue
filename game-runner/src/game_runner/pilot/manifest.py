@@ -7,7 +7,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from game_runner.config import (
-    ContextVariant, HistoryFormat, Settings, StructuredStateProfile, validate_history_format, validate_structured_state,
+    ContextVariant, GoalManagement, GoalReviewThresholds, HistoryFormat, Settings, StructuredStateProfile,
+    validate_goal_management, validate_history_format, validate_structured_state,
 )
 from game_runner.prompts.system import PromptProfile
 
@@ -54,6 +55,8 @@ class Trial(ManifestModel):
     prompt_profile: PromptProfile = "legacy"
     structured_state: StructuredStateProfile = "off"
     history_format: HistoryFormat = "replay"
+    goal_management: GoalManagement = "off"
+    goal_review: GoalReviewThresholds = Field(default_factory=GoalReviewThresholds)
 
 
 class Manifest(ManifestModel):
@@ -77,6 +80,7 @@ class Manifest(ManifestModel):
         for trial in self.trials:
             validate_structured_state(trial.structured_state, trial.prompt_profile, trial.context_policy, trial.context_variant)
             validate_history_format(trial.history_format, trial.structured_state)
+            validate_goal_management(trial.goal_management, trial.structured_state)
             if trial.structured_state == "map-v1" and self.split != "development":
                 raise ValueError("map-v1 trials require the development split")
         if any(trial.prompt_profile == "rules-v2" and (
@@ -118,4 +122,5 @@ class Manifest(ManifestModel):
             summary_output_tokens=actor.summary_output_tokens, max_summary_attempts=actor.max_summary_attempts,
             context_variant=trial.context_variant, prompt_profile=trial.prompt_profile,
             structured_state=trial.structured_state, history_format=trial.history_format,
+            goal_management=trial.goal_management, goal_review=trial.goal_review,
         )

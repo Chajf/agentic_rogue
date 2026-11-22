@@ -190,3 +190,11 @@ def goal_view(state: WorkingState) -> dict | None:
             for position, kind, basis, sighting in candidates[:6]
         ],
     }
+
+
+def supported_route(state: WorkingState, target: Position) -> tuple[Position, ...]:
+    """Return the bounded observed or inferred route used for goal progress."""
+    if state.position is None:
+        return ()
+    record = _route_record(target, _routes(state, state.position))
+    return tuple(tuple(position) for position in record.get("route", ()))

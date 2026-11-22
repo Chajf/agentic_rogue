@@ -5,11 +5,28 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
 
 ContextVariant = Literal["baseline", "neighbors"]
 StructuredStateProfile = Literal["off", "map-v1"]
 HistoryFormat = Literal["replay", "compact"]
+GoalManagement = Literal["off", "managed-v1"]
+
+
+class GoalReviewThresholds(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    same_edge_returns: int = Field(default=2, strict=True, gt=0)
+    movement_stall_actions: int = Field(default=6, strict=True, gt=0)
+
+
+def validate_goal_management(mode: GoalManagement, structured_state: StructuredStateProfile) -> None:
+    if mode not in {"off", "managed-v1"}:
+        raise ValueError("GOAL_MANAGEMENT must be off or managed-v1")
+    if mode == "managed-v1" and structured_state != "map-v1":
+        raise ValueError("managed-v1 requires map-v1 structured state")
 
 
 def validate_structured_state(
@@ -52,6 +69,8 @@ class Settings:
     prompt_profile: PromptProfile = "legacy"
     structured_state: StructuredStateProfile = "off"
     history_format: HistoryFormat = "replay"
+    goal_management: GoalManagement = "off"
+    goal_review: GoalReviewThresholds = field(default_factory=GoalReviewThresholds)
 
     def __post_init__(self) -> None:
         if self.prompt_profile not in ACTOR_PROMPTS:
@@ -64,6 +83,7 @@ class Settings:
             raise ValueError("neighbors requires history_only")
         validate_structured_state(self.structured_state, self.prompt_profile, self.context_policy, self.context_variant)
         validate_history_format(self.history_format, self.structured_state)
+        validate_goal_management(self.goal_management, self.structured_state)
         if self.summary_output_tokens <= 0 or self.summary_context_token_budget <= self.summary_output_tokens:
             raise ValueError("SUMMARY_CONTEXT_TOKEN_BUDGET must exceed positive SUMMARY_OUTPUT_TOKENS")
         if self.max_summary_attempts <= 0:
@@ -80,7 +100,7 @@ class Settings:
     @classmethod
     def from_env(
         cls, *, prompt_profile: PromptProfile | None = None, structured_state: StructuredStateProfile | None = None,
-        history_format: HistoryFormat | None = None,
+        history_format: HistoryFormat | None = None, goal_management: GoalManagement | None = None,
     ) -> "Settings":
         seed = os.getenv("GAME_SEED", "").strip()
         try:
@@ -117,6 +137,7 @@ class Settings:
             prompt_profile=prompt_profile if prompt_profile is not None else os.getenv("PROMPT_PROFILE", "legacy"),
             structured_state=structured_state if structured_state is not None else os.getenv("STRUCTURED_STATE", "off"),
             history_format=history_format if history_format is not None else os.getenv("HISTORY_FORMAT", "replay"),
+            goal_management=goal_management if goal_management is not None else os.getenv("GOAL_MANAGEMENT", "off"),
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

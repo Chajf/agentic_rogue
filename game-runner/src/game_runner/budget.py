@@ -41,6 +41,9 @@ class TrialBudget:
         self.series.check(action=action, call=call)
         self.trial.check(action=action, call=call)
 
+    def has_call_capacity(self, *, reserve: int = 0) -> bool:
+        return all(cap.calls + reserve < cap.call_limit for cap in (self.trial, self.series))
+
     def start_call(self) -> None:
         self.check(call=True)
         self.series.calls += 1

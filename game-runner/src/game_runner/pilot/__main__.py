@@ -55,7 +55,9 @@ def main() -> None:
             raise PilotError("runner revision must be a full Git SHA")
         # The manifest supplies inference settings, including the model name and prompt profile.
         os.environ["MODEL_NAME"] = manifest.actor.model_name
-        runtime = Settings.from_env(prompt_profile="legacy", structured_state="off", history_format="replay")
+        runtime = Settings.from_env(
+            prompt_profile="legacy", structured_state="off", history_format="replay", goal_management="off",
+        )
         migrate()
         reason = asyncio.run(run_series(manifest, runtime, binary=binary.resolve(), revision=revision))
         print(f"series {manifest.series_id} ended with {reason}")
