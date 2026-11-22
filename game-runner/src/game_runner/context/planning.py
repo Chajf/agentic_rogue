@@ -55,7 +55,7 @@ class ContextPlanner:
     async def prepare(
         self, session_id: UUID, observation: Observation, event_id: int,
         outcome: ObservationOutcome, progress: Progress, working_state: WorkingState | None = None,
-        goal_context: dict | None = None,
+        goal_context: dict | None = None, setup_evidence: list[dict] | None = None,
     ) -> PreparedContext:
         settings = self.settings
         view = None
@@ -74,7 +74,7 @@ class ContextPlanner:
                 observation, history, observation_outcome=outcome, progress=progress,
                 memory=revision, uncovered=uncovered, context_variant=settings.context_variant,
                 prompt_profile=settings.prompt_profile, working_view=view, history_format=settings.history_format,
-                goal_context=goal_context,
+                goal_context=goal_context, setup_evidence=setup_evidence,
             )
 
         def fits(messages):

@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+from hashlib import file_digest
 import os
 from pathlib import Path
 import re
@@ -12,8 +13,9 @@ from pydantic import ValidationError
 
 from game_runner.config import Settings
 from game_runner.migrate import main as migrate
+from game_runner.pilot.diagnostics import DiagnosticMismatch, DiagnosticSpec, prepare_diagnostic
 from game_runner.pilot.manifest import Manifest
-from game_runner.pilot.runner import run_series
+from game_runner.pilot.runner import private_rogue, run_series
 from game_runner.pilot.store import PilotError
 from game_runner.rule_feasibility.artifacts import FeasibilityError
 
@@ -25,12 +27,16 @@ def main() -> None:
     run.add_argument("--manifest", required=True, type=Path)
     run.add_argument("--rogue-binary", type=Path, default=os.getenv("ROGUE_ENV_ROGUE_BINARY"))
     run.add_argument("--runner-revision", default=os.getenv("PILOT_RUNNER_REVISION"))
+    prepare = commands.add_parser("prepare-diagnostic", help="freeze a public native Rogue setup trace")
+    prepare.add_argument("--spec", required=True, type=Path)
+    prepare.add_argument("--rogue-binary", type=Path, default=os.getenv("ROGUE_ENV_ROGUE_BINARY"))
+    prepare.add_argument("--output", required=True, type=Path)
     export = commands.add_parser("export")
     export.add_argument("--series-id", required=True, type=UUID)
     export.add_argument("--output", required=True, type=Path)
     analyze = commands.add_parser("analyze", help="analyze a frozen pilot export without running Rogue")
     analyze.add_argument("--corpus", required=True, type=Path, help="verified pilot export directory")
-    analyze.add_argument("--split", required=True, choices=("development", "pilot_evaluation"))
+    analyze.add_argument("--split", required=True, choices=("development", "pilot_evaluation", "held_out"))
     analyze.add_argument("--output", required=True, type=Path, help="fresh local directory for the report")
     args = parser.parse_args()
     try:
@@ -44,10 +50,17 @@ def main() -> None:
 
             print(write_report(args.corpus, args.split, args.output))
             return
-        manifest = Manifest.read(args.manifest)
         binary = args.rogue_binary
         if binary is None or not binary.is_file() or not os.access(binary, os.X_OK):
             raise PilotError("provide an executable pinned build using --rogue-binary")
+        if args.command == "prepare-diagnostic":
+            spec = DiagnosticSpec.model_validate_json(args.spec.read_bytes())
+            frozen = asyncio.run(_prepare(binary.resolve(), spec))
+            with args.output.open("x", encoding="utf-8") as destination:
+                destination.write(frozen.model_dump_json(indent=2) + "\n")
+            print(args.output)
+            return
+        manifest = Manifest.read(args.manifest)
         revision = args.runner_revision or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL,
         ).strip()
@@ -64,10 +77,17 @@ def main() -> None:
     except ValidationError as exc:
         errors = ", ".join(".".join(map(str, item["loc"])) or "manifest" for item in exc.errors())
         parser.exit(2, f"Invalid manifest fields: {errors}\n")
-    except (PilotError, FeasibilityError) as exc:
+    except (DiagnosticMismatch, PilotError, FeasibilityError) as exc:
         parser.exit(1, f"{exc}\n")
     except Exception as exc:
         parser.exit(1, f"Pilot command failed ({type(exc).__name__}).\n")
+
+
+async def _prepare(binary: Path, spec: DiagnosticSpec):
+    with binary.open("rb") as source:
+        digest = file_digest(source, "sha256").hexdigest()
+    async with private_rogue(binary, 10) as (client, _):
+        return await prepare_diagnostic(client, spec, digest)
 
 
 if __name__ == "__main__":

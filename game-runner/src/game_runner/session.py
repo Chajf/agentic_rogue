@@ -20,6 +20,7 @@ from game_runner.graph.nodes.action import SessionInterrupted
 from game_runner.context.transitions import ObservationOutcome
 from game_runner.context.working_state import UnlinkedObservation, WorkingState
 from game_runner.persistence.repository import GameRepository
+from game_runner.pilot.diagnostics import DiagnosticMismatch, FrozenDiagnostic, run_diagnostic_setup
 from game_runner.prompts.system import actor_prompt_version
 
 
@@ -27,6 +28,7 @@ async def run_session(
     settings: Settings, repository: GameRepository, model=None, *, summary_model=None,
     client: RogueClient | None = None, session_id: UUID | None = None, budget: TrialBudget | None = None,
     on_finish: Callable[[str, str], None] | None = None,
+    diagnostic: FrozenDiagnostic | None = None, rogue_binary_sha256: str = "",
 ) -> str:
     if session_id is None:
         session_id = uuid4()
@@ -115,6 +117,18 @@ async def run_session(
         )
         if budget and observation.seed != settings.game_seed:
             return finish("error", reason="seed_mismatch")
+        setup_evidence = None
+        if diagnostic is not None:
+            try:
+                start = await run_diagnostic_setup(
+                    rogue, repository, session_id, diagnostic, rogue_binary_sha256,
+                    observation, progress, working_state, budget,
+                )
+            except BudgetStop as exc:
+                return finish("limit_reached", reason=str(exc))
+            except DiagnosticMismatch as exc:
+                return finish("error", str(exc), reason="diagnostic_mismatch")
+            observation, progress, setup_evidence = start.observation, start.progress, start.evidence
         if observation.terminated:
             return finish(observation.status, observation.error)
 
@@ -140,7 +154,7 @@ async def run_session(
         except Exception as exc:
             return finish("error", _safe_error(exc, budget), reason="graph_initialization")
         actions = 0
-        observation_event_id = event_id
+        observation_event_id = progress.event_id
         observation_outcome: ObservationOutcome = "succeeded"
         while not observation.terminated and actions < settings.max_game_actions:
             try:
@@ -151,6 +165,7 @@ async def run_session(
                     "observation_event_id": observation_event_id, "observation_outcome": observation_outcome,
                     "attempts": 0,
                     "progress": progress, "working_state": working_state, "goal_loop": goal_loop,
+                    "setup_evidence": setup_evidence,
                 })
             except BudgetStop as exc:
                 return finish("limit_reached", reason=str(exc))

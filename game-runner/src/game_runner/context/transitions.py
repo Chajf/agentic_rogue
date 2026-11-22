@@ -20,7 +20,7 @@ class DecisionTransition:
     input_event_id: int
     input_observation: Observation
     input_outcome: ObservationOutcome
-    model_call_id: int
+    model_call_id: int | None
     action: dict
     rationale: str
     output_event_id: int

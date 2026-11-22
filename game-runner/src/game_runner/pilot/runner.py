@@ -49,6 +49,7 @@ async def run_series(
 ) -> str:
     with binary.open("rb") as source:
         digest = file_digest(source, "sha256").hexdigest()
+    rogue_timeout = manifest.timeouts.rogue_seconds if manifest.timeouts else runtime.rogue_timeout_seconds
     provenance = {
         "runner_revision": revision, "rogue_source_pin": ROGUE_COMMIT, "rogue_binary_sha256": digest,
         "context_policy_version": POLICY_VERSION,
@@ -56,7 +57,8 @@ async def run_series(
             trial.trial_id: actor_prompt_version(trial.context_variant, prompt_profile=trial.prompt_profile)
             for trial in manifest.trials
         },
-        "model_timeout_seconds": runtime.model_timeout_seconds, "rogue_timeout_seconds": runtime.rogue_timeout_seconds,
+        "model_timeout_seconds": manifest.timeouts.model_seconds if manifest.timeouts else runtime.model_timeout_seconds,
+        "rogue_timeout_seconds": rogue_timeout,
     }
     profiles = {trial.prompt_profile for trial in manifest.trials}
     if len(profiles) == 1:
@@ -68,7 +70,7 @@ async def run_series(
         create_series(connection, manifest, provenance)
         budget = RequestBudget(series.actions, series.model_calls, series.seconds, "series")
         try:
-            async with rogue_factory(binary, runtime.rogue_timeout_seconds) as (client, close_episode):
+            async with rogue_factory(binary, rogue_timeout) as (client, close_episode):
                 for trial in manifest.trials:
                     budget.check(action=True, call=True)
                     session_id = uuid4()
@@ -82,10 +84,11 @@ async def run_series(
                     def on_finish(status: str, detail: str) -> None:
                         finalize_trial(connection, manifest.series_id, trial.trial_id, status, detail)
 
+                    setup = {"diagnostic": trial.diagnostic, "rogue_binary_sha256": digest} if trial.diagnostic else {}
                     try:
                         await execute_trial(
                             settings, repository, session_id=session_id, client=client,
-                            budget=trial_budget, on_finish=on_finish,
+                            budget=trial_budget, on_finish=on_finish, **setup,
                         )
                     finally:
                         await close_episode()

@@ -35,7 +35,7 @@ def create_series(connection, manifest: Manifest, provenance: dict) -> None:
             "INSERT INTO pilot_series(id, split, manifest) VALUES (%s, %s, %s) "
             "ON CONFLICT (id) DO NOTHING RETURNING id",
             (manifest.series_id, manifest.split, Jsonb({
-                **manifest.model_dump(mode="json"), "provenance": provenance,
+                **manifest.snapshot(), "provenance": provenance,
             })),
         ).fetchone()
         if inserted is None:

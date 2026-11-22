@@ -40,6 +40,7 @@ def build_messages(
     uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
     prompt_profile: PromptProfile = "legacy", working_view: dict | None = None,
     history_format: HistoryFormat = "replay", goal_context: dict | None = None,
+    setup_evidence: list[dict] | None = None,
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=ACTOR_PROMPTS[prompt_profile].instruction)]
     if history_format == "replay":
@@ -74,6 +75,10 @@ def build_messages(
             "\nObserved working state. Coordinates are zero-based [row, column]. "
             "Null terrain is unknown. Age is in API steps.\n"
             + json.dumps(working_view, ensure_ascii=False, separators=(",", ":"))
+        )
+    if setup_evidence is not None:
+        current += "\nScripted diagnostic setup (historical observations):\n" + json.dumps(
+            setup_evidence, ensure_ascii=False, separators=(",", ":"),
         )
     if goal_context is not None:
         current += "\n" + ACTOR_GOAL_GUIDANCE + "\n" + json.dumps(goal_context, separators=(",", ":"))
