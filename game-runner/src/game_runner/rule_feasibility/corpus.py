@@ -7,6 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from game_runner.clients.rogue import Observation
+from game_runner.pilot.evaluation_evidence import validate_evaluation
 from game_runner.pilot.manifest import Manifest
 
 from .artifacts import FAMILIES, FeasibilityError, digest, read_rows
@@ -40,10 +41,11 @@ def load(directory: Path, split: str) -> Corpus:
         raise FeasibilityError("P3 bundle checksum mismatch")
 
     metadata = json.loads(contents["manifest.json"])
-    if metadata.get("export_schema_version") != 1 or metadata.get("opportunity_schema_version") != 1:
+    version = metadata.get("export_schema_version")
+    if version not in (1, 2) or metadata.get("schema_version") != version or metadata.get("opportunity_schema_version") != 1:
         raise FeasibilityError("unsupported P3 export or screening schema")
     manifest = Manifest.model_validate({
-        key: metadata[key] for key in Manifest.model_fields
+        key: metadata[key] for key in Manifest.model_fields if key in metadata
     })
     if manifest.split != split:
         raise FeasibilityError("P3 bundle split does not match the requested split")
@@ -86,6 +88,8 @@ def load(directory: Path, split: str) -> Corpus:
             raise FeasibilityError("invalid or duplicate trajectory ID")
         store[row["id"]] = row
     _validate_links(corpus)
+    if version == 2:
+        validate_evaluation(corpus, metadata)
     return corpus
 
 

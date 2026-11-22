@@ -33,6 +33,7 @@ def make_actor_nodes(
         prepared = await planner.prepare(
             state["session_id"], observation, event_id, state["observation_outcome"], progress,
             state.get("working_state"), loop.actor_record() if loop is not None else None,
+            setup_evidence=state.get("setup_evidence"),
         )
         return {
             "messages": prepared.messages, "base_messages": prepared.messages,

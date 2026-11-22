@@ -16,6 +16,10 @@ from game_runner.prompts.goals import ACTOR_GOAL_GUIDANCE, GOAL_SELECTOR_INSTRUC
 from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
 
 
+WORKING_STATE_LABEL = "Observed working state. Coordinates are zero-based [row, column]. "
+SETUP_LABEL = "Scripted diagnostic setup (historical observations):"
+
+
 def _observation_text(
     observation: Observation, outcome: ObservationOutcome, *, current: bool = False,
 ) -> str:
@@ -40,6 +44,7 @@ def build_messages(
     uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
     prompt_profile: PromptProfile = "legacy", working_view: dict | None = None,
     history_format: HistoryFormat = "replay", goal_context: dict | None = None,
+    setup_evidence: list[dict] | None = None,
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=ACTOR_PROMPTS[prompt_profile].instruction)]
     if history_format == "replay":
@@ -71,9 +76,13 @@ def build_messages(
             current += neighbors_suffix(observation.screen, position)
     if working_view is not None:
         current += (
-            "\nObserved working state. Coordinates are zero-based [row, column]. "
+            "\n" + WORKING_STATE_LABEL +
             "Null terrain is unknown. Age is in API steps.\n"
             + json.dumps(working_view, ensure_ascii=False, separators=(",", ":"))
+        )
+    if setup_evidence is not None:
+        current += "\n" + SETUP_LABEL + "\n" + json.dumps(
+            setup_evidence, ensure_ascii=False, separators=(",", ":"),
         )
     if goal_context is not None:
         current += "\n" + ACTOR_GOAL_GUIDANCE + "\n" + json.dumps(goal_context, separators=(",", ":"))

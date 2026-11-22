@@ -22,6 +22,7 @@ class StepState(TypedDict):
     base_messages: NotRequired[list[BaseMessage]]
     memory_revision_id: NotRequired[int | None]
     history_window: NotRequired[HistoryWindow | None]
+    setup_evidence: NotRequired[list[dict] | None]
     progress: NotRequired[Progress]
     working_state: NotRequired[WorkingState | None]
     goal_loop: NotRequired[GoalLoop | None]

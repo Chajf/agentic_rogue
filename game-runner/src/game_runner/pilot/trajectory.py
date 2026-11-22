@@ -368,7 +368,11 @@ def _neighbors_comparison(trials: list[dict], horizon: int) -> dict:
 
 
 def analyze(corpus: Corpus) -> tuple[dict, list[dict]]:
-    """Return trial metrics and one evidence-linked row per recorded dispatch."""
+    """Return deterministic metrics and an evidence-linked ledger."""
+    if corpus.manifest.schema_version == 2:
+        from game_runner.pilot.evaluation import analyze_evaluation
+
+        return analyze_evaluation(corpus)
     events_by_trial = defaultdict(list)
     calls_by_trial = defaultdict(list)
     for event in sorted(corpus.events.values(), key=lambda event: event["id"]):

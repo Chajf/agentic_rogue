@@ -79,15 +79,15 @@ class GameRepository:
 
     def start_game_event(
         self, session_id: UUID, kind: str, *, model_call_id: int | None = None,
-        action_request: dict | None = None,
+        action_request: dict | None = None, scripted_input_event_id: int | None = None,
     ) -> int:
         with connect() as connection:
             row = connection.execute(
-                "INSERT INTO game_events(session_id, model_call_id, kind, action_request, outcome) "
-                "VALUES (%s, %s, %s, %s, 'pending') RETURNING id",
+                "INSERT INTO game_events(session_id, model_call_id, kind, action_request, scripted_input_event_id, outcome) "
+                "VALUES (%s, %s, %s, %s, %s, 'pending') RETURNING id",
                 (
                     session_id, model_call_id, kind,
-                    Jsonb(action_request) if action_request is not None else None,
+                    Jsonb(action_request) if action_request is not None else None, scripted_input_event_id,
                 ),
             ).fetchone()
             assert row is not None
@@ -112,6 +112,12 @@ class GameRepository:
     def record_goal_audit(
         self, session_id: UUID, event_id: int, field: Literal["goal_review", "goal_transition"], metadata: dict,
     ) -> None:
+        self._record_progress(session_id, event_id, field, metadata)
+
+    def record_diagnostic_anchor(self, session_id: UUID, event_id: int, metadata: dict) -> None:
+        self._record_progress(session_id, event_id, "diagnostic_anchor", metadata)
+
+    def _record_progress(self, session_id: UUID, event_id: int, field: str, metadata: dict) -> None:
         with connect() as connection:
             result = connection.execute(
                 "UPDATE game_events SET progress = jsonb_set(COALESCE(progress, '{}'::jsonb), ARRAY[%s::text], %s) "
@@ -119,7 +125,7 @@ class GameRepository:
                 (field, Jsonb(metadata), session_id, event_id),
             )
             if result.rowcount != 1:
-                raise ValueError("goal audit requires a saved observation in the same session")
+                raise ValueError("progress audit requires a saved observation in the same session")
 
     def recent_transitions(
         self, session_id: UUID, observation_event_id: int, limit: int,
