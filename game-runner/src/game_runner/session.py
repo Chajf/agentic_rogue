@@ -16,7 +16,7 @@ from game_runner.context.goal_loop import GoalLoop
 from game_runner.context.planning import ContextSettings
 from game_runner.context.progress import Progress
 from game_runner.graph.builder import build_graph
-from game_runner.graph.nodes.step import SessionInterrupted
+from game_runner.graph.nodes.action import SessionInterrupted
 from game_runner.context.transitions import ObservationOutcome
 from game_runner.context.working_state import UnlinkedObservation, WorkingState
 from game_runner.persistence.repository import GameRepository
