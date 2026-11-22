@@ -199,3 +199,11 @@ def test_purposeful_backtracking_resets_stall_when_it_advances_the_goal_route():
     assert returned["outcome"] == "progress"
     assert returned["same_edge_returns"] == returned["comparable_moves_without_progress"] == 0
     assert trace.step()["outcome"] == "complete"
+
+
+def test_stairs_replacing_known_terrain_open_review_after_deferral():
+    reset = frame(".@..", "....")
+    trace = GoalTrace(reset, (action("SEARCH"), frame(".@.%", "....")))
+    trace.reply("defer")
+    trace.step()
+    assert trace.reasons() == {"new_opportunity"}

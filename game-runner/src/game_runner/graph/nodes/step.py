@@ -15,7 +15,7 @@ from game_runner.context.planning import ContextPlanner, ContextSettings
 from game_runner.context.progress import Progress
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
 from game_runner.context.working_state import UnlinkedObservation
-from game_runner.decision import parse_decision
+from game_runner.decision import ManagedDecision, parse_decision
 from game_runner.graph.state import StepState
 from game_runner.persistence.repository import GameRepository
 from game_runner.prompts.decision_retry import DECISION_RETRY_INSTRUCTION
@@ -39,9 +39,10 @@ def make_nodes(
     async def context(state: StepState) -> dict:
         observation, event_id = state["observation"], state["observation_event_id"]
         progress = state.get("progress") or Progress.initial(event_id, observation)
+        loop = state.get("goal_loop")
         prepared = await planner.prepare(
             state["session_id"], observation, event_id, state["observation_outcome"], progress,
-            state.get("working_state"),
+            state.get("working_state"), loop.actor_record() if loop is not None else None,
         )
         return {
             "messages": prepared.messages, "base_messages": prepared.messages,
@@ -50,6 +51,13 @@ def make_nodes(
             "attempts": 0,
             "action": None,
         }
+
+    def actor_metadata(state: StepState) -> dict | None:
+        loop = state.get("goal_loop")
+        if loop is None:
+            return None
+        goal = loop.goal
+        return {"active_goal_id": goal.id if goal is not None and goal.status == "active" else None}
 
     async def invoke_model(state: StepState) -> dict:
         messages: list[BaseMessage] = state["messages"]
@@ -63,6 +71,7 @@ def make_nodes(
             state["session_id"], input_messages, observation_event_id=state["observation_event_id"],
             memory_revision_id=state["memory_revision_id"],
             input_token_count=count.count, input_token_count_method=count.method, history_window=state["history_window"],
+            decision_metadata=actor_metadata(state),
         )
         started = time.monotonic()
         try:
@@ -91,9 +100,14 @@ def make_nodes(
         error: str | None = None
         decision = None
         try:
-            decision = parse_decision(response, state["observation"].mode)
+            decision = parse_decision(response, state["observation"].mode, managed=state.get("goal_loop") is not None)
         except ValueError as exc:
             error = str(exc)
+        metadata = None
+        if isinstance(decision, ManagedDecision):
+            metadata = actor_metadata(state)
+            assert metadata is not None
+            metadata["request_goal_review"] = decision.request_goal_review
         repository.finish_model_call(
             state["call_id"], "invalid" if error else "valid",
             raw_response=raw,
@@ -102,7 +116,7 @@ def make_nodes(
             validation_error=error,
             response_metadata=raw.get("response_metadata"),
             usage_metadata=raw.get("usage_metadata"),
-            duration_ms=state["duration_ms"],
+            duration_ms=state["duration_ms"], decision_metadata=metadata,
         )
         if error:
             if state["attempts"] >= max_model_calls:
@@ -118,7 +132,10 @@ def make_nodes(
                 raise ContextLimitError("actor correction exceeds retry reserve")
             return {"action": None, "messages": retry}
         assert decision is not None
-        return {"action": decision.action, "rationale": decision.rationale}
+        return {
+            "action": decision.action, "rationale": decision.rationale,
+            "request_goal_review": isinstance(decision, ManagedDecision) and decision.request_goal_review,
+        }
 
     def record_observation(
         state: StepState, event_id: int, action_payload: dict, observation: Observation,
@@ -130,6 +147,7 @@ def make_nodes(
         )
         persisted_progress = asdict(progress)
         working_state = state.get("working_state")
+        transition = None
         if working_state is not None:
             transition = DecisionTransition(
                 input_event_id=state["observation_event_id"],
@@ -152,6 +170,15 @@ def make_nodes(
             http_status=200 if outcome == "succeeded" else None,
             observation=observation.model_dump(mode="json"), progress=persisted_progress, error=error,
         )
+        loop = state.get("goal_loop")
+        if loop is not None:
+            assert transition is not None and working_state is not None
+            goal_delta = loop.advance(
+                transition, working_state, persisted_progress["working_state_delta"],
+                review_requested=state.get("request_goal_review", False),
+            )
+            if goal_delta is not None:
+                repository.record_goal_audit(state["session_id"], event_id, "goal_transition", goal_delta)
         return {
             "next_observation": observation, "next_observation_event_id": event_id,
             "next_observation_outcome": outcome, "next_progress": progress, "next_working_state": working_state,

@@ -70,6 +70,13 @@ Standalone runs can set `HISTORY_FORMAT=compact` with `STRUCTURED_STATE=map-v1`.
 The export includes the eligible and delivered history event IDs and the input
 token count for each history-only decision call.
 
+Set `"goal_management": "managed-v1"` on a `map-v1` development trial to
+enable model-selected goals. The optional `goal_review` block records the
+`same_edge_returns` and `movement_stall_actions` thresholds, which default
+to 2 and 6. Both calls share the same trial and series budgets. The pilot
+exports goal selection separately from action decisions. Standalone runs can
+set `GOAL_MANAGEMENT=managed-v1` alongside the map profile settings.
+
 For DeepSeek V4.1 Flash on OpenRouter, a matched development smoke run reached
 12 actions per policy with reasoning disabled and both `actor.context_tokens`
 and `actor.summary_context_tokens` set to 16384. The actor and summary completion

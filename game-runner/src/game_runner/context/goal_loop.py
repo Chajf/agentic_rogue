@@ -32,6 +32,7 @@ class GoalLoop:
     last_review_event: int | None = None
     _last_signature: tuple | None = None
     _last_candidates: set[tuple] = field(default_factory=set)
+    _changed_terrain: set[Position] = field(default_factory=set)
     _next_id: int = 1
     _comparable_moves: int = 0
     _edge_traversals: int = 0
@@ -63,7 +64,7 @@ class GoalLoop:
                 resource = candidate["kind"] == "collect"
                 evidence = state.entities[target] if resource else state.terrain[target]
                 if _identity(candidate) not in self._last_candidates and (
-                    resource or evidence.first_seen.event_id > self.last_review_event
+                    resource or target in self._changed_terrain
                 ):
                     reasons["new_opportunity"] = evidence.source.event_id
                     break
@@ -86,6 +87,7 @@ class GoalLoop:
         self._last_signature = self._signature(observation, state)
         self._last_candidates = {_identity(candidate) for candidate in review.candidates}
         self.pending.clear()
+        self._changed_terrain.clear()
         self._reset_stall()
 
     def actor_record(self) -> dict:
@@ -98,6 +100,9 @@ class GoalLoop:
         if review_requested:
             self.pending["actor_requested"] = event_id
         attempt = delta["attempt"]
+        if state.map_instance != attempt["map_instance"]:
+            self._changed_terrain.clear()
+        self._changed_terrain.update(tuple(change["position"]) for change in delta.get("terrain", ()))
         previous = self.goal
         verdict = None
         if previous is not None and previous.status in {"active", "suspended"}:

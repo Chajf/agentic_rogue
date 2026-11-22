@@ -12,6 +12,7 @@ from game_runner.context.decision_support import neighbors_suffix
 from game_runner.context.memory import MemoryRevision
 from game_runner.context.progress import Progress, visible_position
 from game_runner.context.transitions import DecisionTransition, ObservationOutcome
+from game_runner.prompts.goals import ACTOR_GOAL_GUIDANCE, GOAL_SELECTOR_INSTRUCTION
 from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
 
 
@@ -38,7 +39,7 @@ def build_messages(
     progress: Progress | None = None, memory: MemoryRevision | None = None,
     uncovered: list[dict] | None = None, context_variant: ContextVariant = "baseline",
     prompt_profile: PromptProfile = "legacy", working_view: dict | None = None,
-    history_format: HistoryFormat = "replay",
+    history_format: HistoryFormat = "replay", goal_context: dict | None = None,
 ) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(content=ACTOR_PROMPTS[prompt_profile].instruction)]
     if history_format == "replay":
@@ -74,7 +75,15 @@ def build_messages(
             "Null terrain is unknown. Age is in API steps.\n"
             + json.dumps(working_view, ensure_ascii=False, separators=(",", ":"))
         )
+    if goal_context is not None:
+        current += "\n" + ACTOR_GOAL_GUIDANCE + "\n" + json.dumps(goal_context, separators=(",", ":"))
     if history_format == "compact":
         current = render_compact_history(history) + current
     messages.append(HumanMessage(content=current))
     return messages
+
+
+def build_goal_selection_messages(observation: Observation, evidence: dict) -> list[BaseMessage]:
+    current = _observation_text(observation, "succeeded", current=True)
+    current += "\nGoal evidence:\n" + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+    return [SystemMessage(content=GOAL_SELECTOR_INSTRUCTION), HumanMessage(content=current)]

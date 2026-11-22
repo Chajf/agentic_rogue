@@ -106,6 +106,9 @@ def _summarize(trial: dict, events: list[dict], calls: list[dict]) -> dict:
         "event_id": event["id"], "api_step": event["api_step"], "streak": event["progress"]["no_movement_streak"],
     } for event in events if (event["progress"] or {}).get("no_movement_streak", 0) >= 2]
     opportunities = _opportunities(events, calls)
+    purposes = ["decision", "episode_summary"]
+    if trial.get("goal_management") == "managed-v1":
+        purposes.append("goal_selection")
     return {
         **trial,
         "action_dispatches": sum(event["kind"] == "action" for event in events),
@@ -116,7 +119,7 @@ def _summarize(trial: dict, events: list[dict], calls: list[dict]) -> dict:
         "screening_opportunities": {family: {"count": len(records), "records": records}
                                     for family, records in opportunities.items()},
         "model_usage": {purpose: _usage([call for call in calls if call["purpose"] == purpose])
-                        for purpose in ("decision", "episode_summary")},
+                        for purpose in purposes},
     }
 
 
@@ -176,7 +179,9 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
         "model_call": """
             SELECT id, observation_event_id, memory_revision_id, purpose, status, input_messages,
                    parsed_action, decision_rationale, usage_metadata, duration_ms, created_at,
-                   input_token_count, input_token_count_method, history_window
+                   input_token_count, input_token_count_method, history_window, decision_metadata,
+                   CASE WHEN purpose = 'goal_selection' THEN raw_response END AS raw_response,
+                   CASE WHEN purpose = 'goal_selection' THEN validation_error END AS validation_error
             FROM model_calls WHERE session_id = %s ORDER BY id
         """,
         "memory_revision": """
@@ -193,6 +198,7 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
             trial["prompt_profile"] = planned.get("prompt_profile", "legacy")
             trial["structured_state"] = planned.get("structured_state", "off")
             trial["history_format"] = planned.get("history_format", "replay")
+            trial["goal_management"] = planned.get("goal_management", "off")
             identity = {"series_id": series_id, "trial_id": trial["trial_id"], "session_id": trial["session_id"]}
             source = {kind: _rows(connection, query, (trial["session_id"],)) if trial["session_id"] else []
                       for kind, query in queries.items()}

@@ -269,7 +269,8 @@ def _trial_metrics(trial: dict, events: list[dict], rows: list[dict], reset: dic
                 **usage.get(purpose, {}),
                 "status_counts": dict(Counter(call["status"] for call in calls if call["purpose"] == purpose)),
             }
-            for purpose in ("decision", "episode_summary")
+            for purpose in ("decision", "episode_summary", "goal_selection")
+            if purpose != "goal_selection" or purpose in usage
         },
     }
     if "context_variant" in trial:

@@ -15,6 +15,10 @@ class Decision(BaseModel):
     rationale: str = Field(min_length=1, max_length=300)
 
 
+class ManagedDecision(Decision):
+    request_goal_review: bool = Field(default=False, strict=True)
+
+
 def validate_mode(decision: Decision, mode: str) -> None:
     action = decision.action
     if mode == "confirm":
@@ -35,7 +39,8 @@ def validate_mode(decision: Decision, mode: str) -> None:
         raise ValueError(f"cannot choose an action in {mode} mode")
 
 
-def parse_decision(content: object, mode: str) -> Decision:
-    decision = Decision.model_validate(decode_json(content))
+def parse_decision(content: object, mode: str, *, managed: bool = False) -> Decision:
+    contract = ManagedDecision if managed else Decision
+    decision = contract.model_validate(decode_json(content))
     validate_mode(decision, mode)
     return decision

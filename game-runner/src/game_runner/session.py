@@ -12,6 +12,7 @@ from langchain.chat_models import init_chat_model
 from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.clients.rogue import RogueAPIError, RogueClient, RogueTransportError
 from game_runner.config import Settings
+from game_runner.context.goal_loop import GoalLoop
 from game_runner.context.planning import ContextSettings
 from game_runner.context.progress import Progress
 from game_runner.graph.builder import build_graph
@@ -117,6 +118,9 @@ async def run_session(
         if observation.terminated:
             return finish(observation.status, observation.error)
 
+        goal_loop = None
+        if settings.goal_management == "managed-v1":
+            goal_loop = GoalLoop(settings.goal_review.same_edge_returns, settings.goal_review.movement_stall_actions)
         try:
             graph = build_graph(
                 model, rogue, repository,
@@ -131,7 +135,7 @@ async def run_session(
                     history_format=settings.history_format,
                 ),
                 summary_model=summary_model,
-                budget=budget,
+                budget=budget, managed_goals=goal_loop is not None,
             )
         except Exception as exc:
             return finish("error", _safe_error(exc, budget), reason="graph_initialization")
@@ -146,7 +150,7 @@ async def run_session(
                     "session_id": session_id, "observation": observation,
                     "observation_event_id": observation_event_id, "observation_outcome": observation_outcome,
                     "attempts": 0,
-                    "progress": progress, "working_state": working_state,
+                    "progress": progress, "working_state": working_state, "goal_loop": goal_loop,
                 })
             except BudgetStop as exc:
                 return finish("limit_reached", reason=str(exc))
