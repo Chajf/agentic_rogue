@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from game_runner.config import Settings
 from game_runner.migrate import main as migrate
-from game_runner.pilot.diagnostics import DiagnosticMismatch, DiagnosticSpec, prepare_diagnostic
+from game_runner.pilot.diagnostics import DiagnosticMismatch, DiagnosticSpec, FrozenDiagnostic, prepare_diagnostic
 from game_runner.pilot.manifest import Manifest
 from game_runner.pilot.runner import private_rogue, run_series
 from game_runner.pilot.store import PilotError
@@ -50,6 +50,7 @@ def main() -> None:
 
             print(write_report(args.corpus, args.split, args.output))
             return
+        manifest = Manifest.read(args.manifest) if args.command == "run" else None
         binary = args.rogue_binary
         if binary is None or not binary.is_file() or not os.access(binary, os.X_OK):
             raise PilotError("provide an executable pinned build using --rogue-binary")
@@ -60,7 +61,7 @@ def main() -> None:
                 destination.write(frozen.model_dump_json(indent=2) + "\n")
             print(args.output)
             return
-        manifest = Manifest.read(args.manifest)
+        assert manifest is not None
         revision = args.runner_revision or subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL,
         ).strip()
@@ -83,7 +84,7 @@ def main() -> None:
         parser.exit(1, f"Pilot command failed ({type(exc).__name__}).\n")
 
 
-async def _prepare(binary: Path, spec: DiagnosticSpec):
+async def _prepare(binary: Path, spec: DiagnosticSpec) -> FrozenDiagnostic:
     with binary.open("rb") as source:
         digest = file_digest(source, "sha256").hexdigest()
     async with private_rogue(binary, 10) as (client, _):

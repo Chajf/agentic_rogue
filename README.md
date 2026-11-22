@@ -101,6 +101,31 @@ The export includes one result per planned trial and rows linked by trial,
 session, and source IDs. `SHA256SUMS` covers the manifest and JSONL files.
 `bundle.sha256` is the SHA-256 of that checksum file.
 
+## Decision-loop evaluation
+
+A v2 manifest sets `schema_version` to 2 and declares its matched
+`contrasts` as pairs of `reference` and `treatment` conditions. Each trial
+names its condition and supplies the matching prompt, state, history, and
+goal settings. The manifest sets `timeouts.model_seconds` and
+`timeouts.rogue_seconds`. Use `development` for development and diagnostic
+series and `held_out` for reset-only holdouts. The seed registry keeps the
+two splits disjoint.
+
+Freeze a diagnostic JSON spec containing `scenario_id`, `seed`, and
+`prefix` as an array of Rogue API actions. It can also name an observed
+`objective`. Then place the generated JSON object under `diagnostic` in
+each trial that shares that start.
+
+```bash
+uv run --locked --all-packages python -m game_runner.pilot prepare-diagnostic \
+  --spec scenario.json --rogue-binary /path/to/rogue --output frozen-scenario.json
+```
+
+Use the standard `run`, `export`, and `analyze` commands for v2 series. The
+runner checks the native binary and observed setup before the first model
+request. The report shows setup dispatches separately and compares measured
+outcomes at the shared confirmed horizon.
+
 ## Offline rule feasibility
 
 P4 reads one finalized P3 bundle per run. Create the output directory first

@@ -95,6 +95,8 @@ def _neighbors_sections(comparison: dict, trials: list[dict]) -> list[str]:
 
 
 def _markdown(metrics: dict) -> str:
+    if metrics["schema_version"] == 2:
+        return _evaluation_markdown(metrics)
     trials = metrics["trials"]
     sections = [
         "# Rogue pilot trajectory analysis",
@@ -150,6 +152,81 @@ def _markdown(metrics: dict) -> str:
         ])
     if comparison := metrics.get("neighbors_comparison"):
         sections.extend(_neighbors_sections(comparison, trials))
+    return "\n\n".join(sections) + "\n"
+
+
+def _evaluation_markdown(metrics: dict) -> str:
+    trials = metrics["trials"]
+    sections = [
+        "# Rogue decision-loop evaluation",
+        f"Series `{metrics['series_id']}` · split `{metrics['split']}` · export SHA-256 `{metrics['bundle_sha256']}`",
+        "## Trial outcomes",
+        _table(
+            ("Trial", "Condition", "Seed", "Scenario", "Outcome", "Reason", "Game", "Setup", "Measured",
+             "Confirmed prefix", "Missing frames", "Uncertain", "Max depth", "Wall time (ms)"),
+            ((t["trial_id"], t["condition"], t["requested_seed"], t["scenario_id"], t["outcome"], t["reason"],
+              t["game_status"], t["setup_dispatches"], t["action_dispatches"], t["confirmed_prefix"],
+              t["missing_observations"], t["uncertain_dispatches"], t["max_observed_depth"], t["wall_time_ms"])
+             for t in trials),
+        ),
+        "## Planned settings and delivered actor context",
+        _table(
+            ("Trial", "Guide", "Prompt version", "State", "History", "Goals", "Actor calls", "State blocks",
+             "Setup blocks", "Goal blocks", "Delivered history format", "Eligible history", "Delivered history", "Trimmed calls"),
+            ((t["trial_id"], t["prompt_profile"], t["prompt_version"], t["structured_state"], t["history_format"],
+              t["goal_management"], c["calls"], c["working_state_calls"], c["setup_evidence_calls"], c["goal_context_calls"],
+              ", ".join(sorted(c["history_formats"])) or None, c["eligible_interactions"], c["delivered_interactions"],
+              c["trimmed_calls"]) for t in trials for c in (t["actor_context"],)),
+        ),
+        "## Movement and goal outcomes",
+        _table(
+            ("Trial", "Visits", "Longest move streak", "A→B→A", "Quiet failures", "Level changes", "Reviews",
+             "Completed goals", "Suspended goals", "Review reasons"),
+            ((t["trial_id"], coverage.get("positions"), coverage.get("longest_no_new_position_move_run", {}).get("actions"),
+              coverage.get("immediate_returns"), t["quiet_failed_moves"], len(t["level_changes"]),
+              sum(t["goals"]["review_statuses"].values()), len(t["goals"]["completed_goal_ids"]),
+              len(t["goals"]["suspended_goal_ids"]),
+              ", ".join(f"{reason} ({count})" for reason, count in sorted(t["goals"]["review_reasons"].items())) or None)
+             for t in trials for coverage in (t["coverage"] or {},)),
+        ),
+        "## Model usage",
+        _table(
+            ("Trial", "Purpose", "Calls", "Invalid", "Errors", "Provider tokens", "Calls missing usage", "Latency (ms)"),
+            _usage_rows(trials),
+        ),
+    ]
+    diagnostics = [(trial, trial["diagnostic_outcome"]) for trial in trials if trial["diagnostic_outcome"] is not None]
+    if diagnostics:
+        sections.extend([
+            "## Diagnostic evidence",
+            _table(
+                ("Trial", "Verified anchor", "Objective", "Observed outcome", "Evidence event", "Decision support"),
+                ((trial["trial_id"], trial["anchor_event_id"], outcome["objective"], outcome["objective_status"],
+                  outcome["evidence_event_id"], outcome["decision_support"]) for trial, outcome in diagnostics),
+            ),
+            "Objective results come from recorded effects. Decision support requires review against the frozen rubric.",
+        ])
+    sections.extend([
+        "## Matched comparisons",
+        f"The planned horizon is {metrics['comparison_horizon']} measured actions. Each difference uses the common "
+        "confirmed prefix. Shorter prefixes are reported separately from full-horizon medians.",
+    ])
+    for contrast in metrics["comparisons"]:
+        median_delta = contrast["median_full_horizon_delta"]
+        sections.extend([
+            f"### {contrast['reference']} versus {contrast['treatment']}",
+            f"Full-horizon pairs {contrast['full_horizon_pairs']} of {len(contrast['pairs'])}."
+            + (f" Median Δ visits {median_delta['positions']:g} and Δ longest move streak "
+               f"{median_delta['longest_move_streak']:g}." if median_delta is not None else ""),
+            _table(
+                ("Seed", "Scenario", "Reference", "Treatment", "Shared horizon", "Full horizon", "Δ positions", "Δ longest streak"),
+                ((pair["seed"], pair["scenario_id"], pair["reference_trial_id"], pair["treatment_trial_id"],
+                  pair["shared_horizon"], "yes" if pair["full_horizon"] else "no",
+                  (pair["delta"] or {}).get("positions"), (pair["delta"] or {}).get("longest_move_streak"))
+                 for pair in contrast["pairs"]),
+            ),
+        ])
+    sections.append("The decision ledger links measured actions, delivered actor context, and goal reviews to their source events.")
     return "\n\n".join(sections) + "\n"
 
 

@@ -9,9 +9,9 @@ from uuid import UUID
 from psycopg.rows import dict_row
 
 from game_runner.context.progress import movement_direction
+from game_runner.pilot.evaluation_evidence import measured_events, trial_evidence
 from game_runner.pilot.store import PilotError, finalize_series, series_lock
 
-EXPORT_VERSION = 1
 OPPORTUNITY_VERSION = 1
 
 
@@ -91,16 +91,17 @@ def _usage(group: list[dict]) -> dict:
     }
 
 
-def _summarize(trial: dict, events: list[dict], calls: list[dict]) -> dict:
+def _summarize(trial: dict, events: list[dict], calls: list[dict], *, confirmed_changes: bool = False) -> dict:
     depths = [
-        (event["id"], (event["observation"].get("state") or {}).get("dungeon_level"))
+        (event["id"], (event["observation"].get("state") or {}).get("dungeon_level"), event["outcome"])
         for event in events if event["observation"]
     ]
-    known_depths = [(event_id, depth) for event_id, depth in depths if depth is not None]
+    known_depths = [(event_id, depth) for event_id, depth, _ in depths if depth is not None]
     level_changes = [
         {"from_event_id": before_id, "to_event_id": after_id, "from": before, "to": after}
-        for (before_id, before), (after_id, after) in zip(depths, depths[1:])
+        for (before_id, before, input_outcome), (after_id, after, output_outcome) in zip(depths, depths[1:])
         if before is not None and after is not None and before != after
+        and (not confirmed_changes or input_outcome == output_outcome == "succeeded")
     ]
     stalls = [{
         "event_id": event["id"], "api_step": event["api_step"], "streak": event["progress"]["no_movement_streak"],
@@ -162,10 +163,11 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
         FROM pilot_trials t LEFT JOIN game_sessions s ON t.session_id = s.id
         WHERE t.series_id = %s ORDER BY t.ordinal
         """, (series_id,))
+    version = series["manifest"]["schema_version"]
     counts = {outcome: sum(trial["outcome"] == outcome for trial in trials)
               for outcome in ("ended", "limited", "failed", "interrupted", "unstarted")}
     (directory / "manifest.json").write_bytes(_canonical({
-        **series["manifest"], "export_schema_version": EXPORT_VERSION,
+        **series["manifest"], "export_schema_version": version,
         "opportunity_schema_version": OPPORTUNITY_VERSION,
         "execution": {"started_at": series["started_at"], "ended_at": series["ended_at"],
                       "stop_reason": series["stop_reason"], "counts": {"planned": len(trials), **counts}},
@@ -173,15 +175,14 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
     queries = {
         "event": """
             SELECT id, model_call_id, kind, action_request, api_step, http_status, observation,
-                   outcome, progress, requested_at, completed_at
+                   outcome, progress, requested_at, completed_at, scripted_input_event_id, error
             FROM game_events WHERE session_id = %s ORDER BY id
         """,
         "model_call": """
             SELECT id, observation_event_id, memory_revision_id, purpose, status, input_messages,
                    parsed_action, decision_rationale, usage_metadata, duration_ms, created_at,
                    input_token_count, input_token_count_method, history_window, decision_metadata,
-                   CASE WHEN purpose = 'goal_selection' THEN raw_response END AS raw_response,
-                   CASE WHEN purpose = 'goal_selection' THEN validation_error END AS validation_error
+                   raw_response, validation_error, response_metadata
             FROM model_calls WHERE session_id = %s ORDER BY id
         """,
         "memory_revision": """
@@ -202,7 +203,27 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
             identity = {"series_id": series_id, "trial_id": trial["trial_id"], "session_id": trial["session_id"]}
             source = {kind: _rows(connection, query, (trial["session_id"],)) if trial["session_id"] else []
                       for kind, query in queries.items()}
-            results.write(_canonical({"series_id": series_id, **_summarize(trial, source["event"], source["model_call"])}))
+            if version == 2:
+                trial.update(trial_evidence(trial, planned, source["event"]))
+                anchor_id = trial["anchor_event_id"]
+                measured = measured_events(source["event"], anchor_id)
+                if anchor_id is not None:
+                    anchor = next(event for event in source["event"] if event["id"] == anchor_id)
+                    measured.insert(0, {
+                        **anchor, "kind": "reset",
+                        "progress": {**(anchor["progress"] or {}), "no_movement_streak": 0},
+                    })
+            else:
+                measured = source["event"]
+                for event in measured:
+                    event.pop("scripted_input_event_id")
+                    event.pop("error")
+                for call in source["model_call"]:
+                    call.pop("response_metadata")
+                    if call["purpose"] != "goal_selection":
+                        call.update(raw_response=None, validation_error=None)
+            summary = _summarize(trial, measured, source["model_call"], confirmed_changes=version == 2)
+            results.write(_canonical({"series_id": series_id, **summary}))
             order = {"model_call": 0, "event": 1, "memory_revision": 2}
             records = [(kind, record) for kind, rows in source.items() for record in rows]
             records.sort(key=lambda entry: (

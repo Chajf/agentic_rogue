@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from game_runner.budget import BudgetStop, TrialBudget, within_budget
 from game_runner.clients.rogue import ActionRequest, KeyActionRequest, Observation, RogueAPIError, RogueClient
@@ -21,6 +21,19 @@ Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 ScriptAction = Annotated[ActionRequest | KeyActionRequest, Field(discriminator="type")]
 
 
+class DiagnosticObjective(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["new_position", "reach_target", "descend_here", "same_position_combat", "observe_current_map"]
+    target: tuple[Annotated[int, Field(ge=1, le=22)], Annotated[int, Field(ge=0, le=79)]] | None = None
+
+    @model_validator(mode="after")
+    def check_target(self):
+        if (self.target is not None) != (self.kind == "reach_target"):
+            raise ValueError("only reach_target requires coordinates")
+        return self
+
+
 class DiagnosticSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -28,6 +41,7 @@ class DiagnosticSpec(BaseModel):
     scenario_id: Identifier
     seed: Annotated[int, Field(strict=True, ge=0, le=2**32 - 1)]
     prefix: Annotated[tuple[ScriptAction, ...], Field(max_length=32)]
+    objective: DiagnosticObjective | None = None
 
 
 class FrozenDiagnostic(DiagnosticSpec):
