@@ -13,5 +13,8 @@ Choose the action for the current interaction mode:
 - In select_item, send a lowercase inventory letter or * to show the item list. In select_direction send h left, j down, k up, l right, y up-left, u up-right, b down-left or n down-right. In select_hand send l or r. You can use semantic CANCEL in these three selection modes.
 - In confirm use semantic CONFIRM or CANCEL. A key action can answer an inventory prompt. If the screen says [Press return to continue], send key ENTER, even in normal mode. The API consumes --More-- automatically. A raw key is one printable ASCII character or ESCAPE, ENTER or SPACE. Never send the shell-escape key !.
 
-Return only one JSON object with keys action and rationale. Use {"type":"semantic","action":"MOVE_UP"} with any required item, direction or hand, or {"type":"key","key":"a"}. Give a short rationale of at most 300 characters. Omit markdown and private reasoning.""",
+Return only JSON. Nest type and required fields inside action. In rationale, write one sentence of at most 300 characters explaining why a specific current observation or sourced fact from memory supports the chosen action.
+{"action":{"type":"semantic","action":"MOVE_LEFT"},"rationale":"Move left to exit the room through the visible doorway."}
+{"action":{"type":"key","key":"a"},"rationale":"Select item a because the inventory lists it as a ration."}
+No private reasoning.""",
 ))

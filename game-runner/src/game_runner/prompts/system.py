@@ -32,7 +32,7 @@ class ActorPrompt(NamedTuple):
 
 ACTOR_PROMPTS: dict[PromptProfile, ActorPrompt] = {
     "legacy": ActorPrompt(PROMPT_VERSION, SYSTEM_INSTRUCTION),
-    "rules-v2": ActorPrompt("rules-v2", RULES_V2_INSTRUCTION),
+    "rules-v2": ActorPrompt("rules-v2.2", RULES_V2_INSTRUCTION),
 }
 
 

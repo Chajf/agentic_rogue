@@ -99,6 +99,12 @@ def test_guide_examples_match_the_action_contract(mode, action, instruction):
     assert instruction in RULES_V2_INSTRUCTION
 
 
+def test_complete_response_examples_match_the_decision_contract():
+    semantic, key = (line for line in RULES_V2_INSTRUCTION.splitlines() if line.startswith("{"))
+    assert parse_decision(semantic, "normal").action.action == "MOVE_LEFT"
+    assert parse_decision(key, "select_item").action.key == "a"
+
+
 async def test_standalone_profile_records_the_delivered_instruction():
     trace = fixed_trace()
     client = FakeClient(trace.output_observation)
@@ -108,7 +114,7 @@ async def test_standalone_profile_records_the_delivered_instruction():
 
     await run_session(settings, repo, model=FakeModel(REST), client=client)
 
-    assert repo.prompt_version == "rules-v2"
+    assert repo.prompt_version == "rules-v2.2"
     assert repo.calls[0]["input_messages"][0] == {"role": "system", "content": RULES_V2_INSTRUCTION}
     assert client.actions[0][1].model_dump(mode="json", exclude_none=True) == ACTION
 
@@ -120,6 +126,7 @@ def test_native_prompt_pair_exports_profile_and_exact_dispatch(isolated_database
     monkeypatch.setenv("PROMPT_PROFILE", "rules-v2")
     monkeypatch.setattr("game_runner.session.init_chat_model", lambda *_, **__: FakeModel(REST, REST, REST))
     payload = _prompt_pair()
+    payload["actor"]["context_tokens"] = 16384
     payload["trials"].append({**payload["trials"][1], "trial_id": "unstarted"})
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
@@ -136,14 +143,14 @@ def test_native_prompt_pair_exports_profile_and_exact_dispatch(isolated_database
     ])
     pilot_main()
     corpus = load(output, "development")
-    versions = {"first": "rogue-v1.3", "second": "rules-v2", "unstarted": "rules-v2"}
+    versions = {"first": "rogue-v1.3", "second": "rules-v2.2", "unstarted": "rules-v2.2"}
     metadata = json.loads((output / "manifest.json").read_bytes())
     assert metadata["provenance"]["prompt_versions_by_trial"] == versions
     assert "prompt_version" not in metadata["provenance"]
     assert [
         (result["prompt_profile"], result["prompt_version"], result["outcome"])
         for result in corpus.trials.values()
-    ] == [("legacy", "rogue-v1.3", "limited"), ("rules-v2", "rules-v2", "limited"), ("rules-v2", None, "unstarted")]
+    ] == [("legacy", "rogue-v1.3", "limited"), ("rules-v2", "rules-v2.2", "limited"), ("rules-v2", None, "unstarted")]
 
     resets = [event["observation"] for event in corpus.events.values() if event["kind"] == "reset"]
     assert len(resets) == 2

@@ -162,7 +162,7 @@ def test_native_bc_pair_exports_and_replays_working_state(isolated_database, mon
     assert [
         (trial["structured_state"], trial["prompt_version"], trial["outcome"])
         for trial in corpus.trials.values()
-    ] == [("off", "rules-v2", "limited"), ("map-v1", "rules-v2", "limited")]
+    ] == [("off", "rules-v2.2", "limited"), ("map-v1", "rules-v2.2", "limited")]
 
     def trial_rows(rows, trial_id):
         return [row for row in rows.values() if row["trial_id"] == trial_id]
