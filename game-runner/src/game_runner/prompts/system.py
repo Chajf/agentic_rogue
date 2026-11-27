@@ -36,6 +36,8 @@ ACTOR_PROMPTS: dict[PromptProfile, ActorPrompt] = {
 }
 
 
-def actor_prompt_version(context_variant: str, *, prompt_profile: PromptProfile = "legacy") -> str:
-    version = ACTOR_PROMPTS[prompt_profile].version
+def actor_prompt_version(
+    context_variant: str, *, prompt_profile: PromptProfile = "legacy", system_one: bool = False,
+) -> str:
+    version = "system-one-v1" if system_one else ACTOR_PROMPTS[prompt_profile].version
     return version + "+neighbors-v1" if context_variant == "neighbors" else version

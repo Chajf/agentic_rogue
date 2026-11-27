@@ -16,7 +16,6 @@ from game_runner.context.memory import POLICY_VERSION
 from game_runner.persistence.repository import GameRepository
 from game_runner.pilot.manifest import Manifest
 from game_runner.pilot.store import claim_trial, create_series, finalize_series, finalize_trial, series_lock
-from game_runner.prompts.system import actor_prompt_version
 from game_runner.session import run_session
 
 ROGUE_COMMIT = "631bdd551cee75e0afc340a71dd5a207a3006204"
@@ -54,7 +53,7 @@ async def run_series(
         "runner_revision": revision, "rogue_source_pin": ROGUE_COMMIT, "rogue_binary_sha256": digest,
         "context_policy_version": POLICY_VERSION,
         "prompt_versions_by_trial": {
-            trial.trial_id: actor_prompt_version(trial.context_variant, prompt_profile=trial.prompt_profile)
+            trial.trial_id: manifest.prompt_version(trial.context_variant, trial.prompt_profile)
             for trial in manifest.trials
         },
         "model_timeout_seconds": manifest.timeouts.model_seconds if manifest.timeouts else runtime.model_timeout_seconds,
@@ -62,7 +61,7 @@ async def run_series(
     }
     profiles = {trial.prompt_profile for trial in manifest.trials}
     if len(profiles) == 1:
-        provenance["prompt_version"] = actor_prompt_version("baseline", prompt_profile=profiles.pop())
+        provenance["prompt_version"] = manifest.prompt_version("baseline", profiles.pop())
     repository = GameRepository()
     series = manifest.series_limits
     reason = "schedule_complete"

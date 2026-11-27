@@ -1,6 +1,7 @@
 """Run one Rogue episode by invoking the graph once per game action."""
 
 import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import asdict
 from collections.abc import Callable
 import json
@@ -10,6 +11,7 @@ from uuid import UUID, uuid4
 from langchain.chat_models import init_chat_model
 
 from game_runner.budget import BudgetStop, TrialBudget, within_budget
+from game_runner.clients.decisions import DecisionsClient
 from game_runner.clients.rogue import RogueAPIError, RogueClient, RogueTransportError
 from game_runner.config import Settings
 from game_runner.context.goal_loop import GoalLoop
@@ -21,7 +23,6 @@ from game_runner.context.transitions import ObservationOutcome
 from game_runner.context.working_state import UnlinkedObservation, WorkingState
 from game_runner.persistence.repository import GameRepository
 from game_runner.pilot.diagnostics import DiagnosticMismatch, FrozenDiagnostic, run_diagnostic_setup
-from game_runner.prompts.system import actor_prompt_version
 
 
 async def run_session(
@@ -34,7 +35,7 @@ async def run_session(
         session_id = uuid4()
         repository.create_session(
             session_id, settings.model_name,
-            actor_prompt_version(settings.context_variant, prompt_profile=settings.prompt_profile),
+            settings.prompt_version,
             context_policy=settings.context_policy,
         )
 
@@ -59,6 +60,11 @@ async def run_session(
         **settings.model_kwargs,
     }
     try:
+        if model is None and settings.actor_type == "system_one":
+            model = DecisionsClient(
+                settings.model_name, settings.model_base_url, settings.model_api_key, settings.model_timeout_seconds,
+                headers=settings.model_kwargs.get("default_headers"),
+            )
         if model is None:
             if "max_tokens" not in model_kwargs and "max_completion_tokens" not in model_kwargs:
                 model_kwargs["max_tokens"] = settings.actor_output_tokens
@@ -74,7 +80,10 @@ async def run_session(
     }), flush=True)
 
     rogue = client if client is not None else RogueClient(settings.rogue_api_url, settings.rogue_timeout_seconds)
-    async with rogue:
+    async with AsyncExitStack() as stack:
+        if isinstance(model, DecisionsClient):
+            await stack.enter_async_context(model)
+        await stack.enter_async_context(rogue)
         if budget:
             try:
                 budget.check(action=True, call=True)

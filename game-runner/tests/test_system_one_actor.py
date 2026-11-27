@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -6,11 +8,15 @@ import pytest
 
 from game_runner.budget import BudgetStop, RequestBudget, TrialBudget
 from game_runner.clients.decisions import DecisionsClient
+from game_runner.config import Settings
 from game_runner.context.budget import ContextLimitError
 from game_runner.context.progress import InventorySnapshot, Progress
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.actor import DecisionValidationError
 from game_runner.graph.nodes.system_one import choice_menu
+from game_runner.pilot.manifest import Manifest
+from game_runner.pilot.runner import private_rogue
+from game_runner.session import run_session
 from test_agent_graph import FakeClient, FakeRepository, input_state, observed
 
 
@@ -150,3 +156,80 @@ async def test_call_budget_and_context_size_stop_before_provider_or_dispatch():
         with pytest.raises(ContextLimitError):
             await graph.ainvoke(input_state(episode))
     assert not repo.calls and not rogue.actions
+
+
+def test_manifest_selects_actor_and_preserves_legacy_snapshot(monkeypatch):
+    monkeypatch.setenv("MODEL_BASE_URL", "https://openrouter.ai/api/alpha")
+    monkeypatch.setenv("MODEL_NAME", "typesafe/jev-1.14")
+    monkeypatch.setenv("ACTOR_TYPE", "system_one")
+    monkeypatch.setenv("PROMPT_PROFILE", "rules-v2")
+    runtime = Settings.from_env()
+    assert runtime.actor_type == "system_one"
+    assert runtime.prompt_version == "system-one-v1"
+    source = {
+        "schema_version": 1, "series_id": str(uuid4()), "split": "development",
+        "actor": {"model_name": runtime.model_name},
+        "trial_limits": {"actions": 4, "model_calls": 6, "seconds": 30},
+        "series_limits": {"actions": 4, "model_calls": 6, "seconds": 30},
+        "trials": [{
+            "trial_id": "seed-12345", "seed": 12345, "context_policy": "history_only",
+            "prompt_profile": "rules-v2", "structured_state": "map-v1",
+        }],
+    }
+    chat = Manifest.model_validate(source)
+    assert chat.settings(runtime, chat.trials[0]).actor_type == "chat"
+    assert "type" not in chat.snapshot()["actor"]
+    source["actor"]["type"] = "system_one"
+    manifest = Manifest.model_validate(source)
+    settings = manifest.settings(runtime, manifest.trials[0])
+    assert settings.actor_type == manifest.snapshot()["actor"]["type"] == "system_one"
+    assert settings.prompt_version == manifest.prompt_version("baseline", "rules-v2")
+    source["trials"][0]["goal_management"] = "managed-v1"
+    with pytest.raises(ValueError, match="System One requires"):
+        Manifest.model_validate(source)
+
+
+@pytest.mark.skipif(not os.environ.get("TEST_ROGUE_BINARY"), reason="TEST_ROGUE_BINARY is not set")
+async def test_system_one_session_plays_native_rogue_with_replay(monkeypatch):
+    monkeypatch.setenv("ACTOR_TYPE", "system_one")
+    monkeypatch.setenv("PROMPT_PROFILE", "rules-v2")
+    monkeypatch.setenv("STRUCTURED_STATE", "map-v1")
+    monkeypatch.setenv("CONTEXT_TOKEN_BUDGET", "16384")
+    monkeypatch.setenv("MODEL_NAME", "typesafe/jev-1.14")
+    monkeypatch.setenv("MODEL_BASE_URL", "https://openrouter.ai/api/alpha")
+    monkeypatch.setenv("MODEL_API_KEY", "mock-api-key")
+    monkeypatch.setenv("GAME_SEED", "12345")
+    monkeypatch.setenv("MAX_GAME_ACTIONS", "7")
+    settings = Settings.from_env()
+    repo = FakeRepository()
+    choices = iter(["inventory", "eat", "item_a", "throw", "direction_right", "item_e", "move_left"])
+    delivered = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        messages = payload["state"]["messages"]
+        options = payload["questions"]["next_action"]["criteria"]
+        choice = next(choices)
+        assert choice in options
+        delivered.append(messages)
+        return httpx.Response(200, json=answer(choice))
+
+    class MockedDecisionsClient(DecisionsClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs, transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr("game_runner.session.DecisionsClient", MockedDecisionsClient)
+    async with private_rogue(Path(os.environ["TEST_ROGUE_BINARY"]), 2) as (rogue, _):
+        status = await run_session(settings, repo, client=rogue)
+
+    assert status == "limit_reached"
+    assert repo.prompt_version == "system-one-v1"
+    assert [event["api_step"] for event in repo.events] == list(range(8))
+    assert repo.events[2]["observation"]["mode"] == "select_item"
+    assert any("tasted good" in message.lower() for message in repo.events[3]["observation"]["messages"])
+    assert repo.events[4]["observation"]["mode"] == "select_direction"
+    assert repo.events[5]["observation"]["mode"] == "select_item"
+    for index, messages in enumerate(delivered):
+        assert f"Current API step: {index}" in messages[-1]["content"]
+        assert repo.calls[index]["history_window"]["delivered_output_event_ids"] == list(range(2, index + 2))
+    assert any('"key":"a"' in message["content"] for message in delivered[-1] if message["role"] == "ai")
