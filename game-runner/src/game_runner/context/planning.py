@@ -1,5 +1,6 @@
 """Select replay, compact evicted evidence, and enforce prompt budgets."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from uuid import UUID
@@ -56,6 +57,7 @@ class ContextPlanner:
         self, session_id: UUID, observation: Observation, event_id: int,
         outcome: ObservationOutcome, progress: Progress, working_state: WorkingState | None = None,
         goal_context: dict | None = None, setup_evidence: list[dict] | None = None,
+        *, count_input: Callable[[list[BaseMessage]], int] | None = None,
     ) -> PreparedContext:
         settings = self.settings
         view = None
@@ -79,7 +81,8 @@ class ContextPlanner:
 
         def fits(messages):
             reserved = settings.actor_output_tokens + RETRY_RESERVE
-            return count_messages(self.model, messages).count + reserved <= settings.token_budget
+            input_count = count_input(messages) if count_input else count_messages(self.model, messages).count
+            return input_count + reserved <= settings.token_budget
 
         base_fits = fits(render([]))
         if not base_fits and view is not None:
