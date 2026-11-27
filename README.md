@@ -27,6 +27,35 @@ docker compose run --rm --build \
 Set `PROMPT_PROFILE=rules-v2` for a standalone episode with the versioned
 Rogue guide. The default profile is `legacy` (`rogue-v1.3`).
 
+## System One actor
+
+Set `MODEL_API_KEY` in your environment or Compose `.env`, then run an episode
+with Jev and the variant C context.
+
+```bash
+docker compose run --rm --build \
+  -e ACTOR_TYPE=system_one \
+  -e MODEL_BASE_URL=https://openrouter.ai/api/alpha \
+  -e MODEL_NAME=typesafe/jev-1.14 \
+  -e PROMPT_PROFILE=rules-v2 -e STRUCTURED_STATE=map-v1 \
+  -e CONTEXT_POLICY=history_only -e GOAL_MANAGEMENT=off \
+  -e HISTORY_FORMAT=replay -e CONTEXT_TOKEN_BUDGET=16384 \
+  -e MAX_GAME_ACTIONS=200 game-runner
+```
+
+Perplexity Decider V1.2 uses the same settings with
+`MODEL_NAME=perplexity/pplx-decider-v1.2`. The actor uses a conservative
+byte-based estimate for the full Decisions request, including the menu. Check
+the delivered history window in each arm when comparing input evidence.
+Rogue's item, direction, and hand replies each count as one dispatch.
+
+For a sequential pilot, set `"type": "system_one"` in the manifest's
+`actor` block and set `prompt_profile` to `rules-v2` in each trial. Use a
+separate manifest with the same seeds for the chat actor. The trace records the
+offered choices, provider probabilities and model version, and billed usage
+when returned. Automatic continuations are visible in the trace and excluded
+from provider call totals.
+
 ## Sequential pilot
 
 Install both workspace packages and build Rogue from the source revision in

@@ -166,15 +166,17 @@ def make_system_one_nodes(
             raise ContextLimitError("choice request and reserved output exceed context budget")
         if budget and not forced:
             budget.start_call()
+        metadata = {
+            "decision_source": "forced" if forced else "system_one",
+            "rationale_source": "actor_adapter", "question": payload["questions"]["next_action"],
+            "option_order": list(options),
+        }
         call_id = repository.start_model_call(
             state["session_id"], payload["state"]["messages"],
             observation_event_id=state["observation_event_id"], memory_revision_id=state["memory_revision_id"],
             history_window=state["history_window"], input_token_count=None if forced else input_size,
             input_token_count_method=None if forced else "utf8_byte_estimate",
-            decision_metadata={
-                "decision_source": "forced" if forced else "system_one",
-                "rationale_source": "actor_adapter", "question": payload["questions"]["next_action"],
-            },
+            decision_metadata=metadata,
         )
         started = time.monotonic()
         try:
@@ -186,7 +188,7 @@ def make_system_one_nodes(
             )
             raise
         return {
-            "choice_response": response, "call_id": call_id,
+            "choice_response": response, "choice_metadata": metadata, "call_id": call_id,
             "duration_ms": round((time.monotonic() - started) * 1000), "attempts": state["attempts"] + int(not forced),
         }
 
@@ -217,12 +219,20 @@ def make_system_one_nodes(
             input_tokens, output_tokens = usage.get("input_tokens"), usage.get("output_tokens")
             if type(input_tokens) is int and type(output_tokens) is int and min(input_tokens, output_tokens) >= 0:
                 usage["total_tokens"] = input_tokens + output_tokens
+        provider = {key: response[key] for key in ("id", "model", "provider") if key in response}
+        metadata = {**state["choice_metadata"], **provider}
+        if isinstance(answer, dict):
+            metadata["answer"] = {
+                key: answer[key] for key in ("type", "choice", "probabilities", "confidence") if key in answer
+            }
+        elif forced:
+            metadata["answer"] = {"type": "choice", "choice": choice}
         repository.finish_model_call(
             state["call_id"], "invalid" if error else "valid", raw_response=None if forced else response,
             parsed_action=decision.action.model_dump(mode="json", exclude_none=True) if decision and not error else None,
             decision_rationale=decision.rationale if decision and not error else None, validation_error=error,
-            response_metadata={key: response[key] for key in ("id", "model", "provider") if key in response} or None,
-            usage_metadata=usage, duration_ms=state["duration_ms"],
+            response_metadata=provider or None, usage_metadata=usage, duration_ms=state["duration_ms"],
+            decision_metadata=metadata,
         )
         if error:
             if forced or state["attempts"] >= max_model_calls:

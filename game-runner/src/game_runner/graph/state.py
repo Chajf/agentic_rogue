@@ -31,6 +31,7 @@ class StepState(TypedDict):
     response: NotRequired[AIMessage]
     choice_options: NotRequired[dict[str, tuple[str, ActionRequest | KeyActionRequest]]]
     choice_response: NotRequired[dict]
+    choice_metadata: NotRequired[dict]
     call_id: NotRequired[int]
     duration_ms: NotRequired[int]
     action: NotRequired[ActionRequest | KeyActionRequest | None]

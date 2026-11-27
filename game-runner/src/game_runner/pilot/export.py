@@ -2,6 +2,7 @@
 
 from hashlib import file_digest, sha256
 import json
+from math import isfinite
 from pathlib import Path
 import tempfile
 from uuid import UUID
@@ -71,8 +72,13 @@ def _opportunities(events: list[dict], calls: list[dict]) -> dict[str, list[dict
 
 
 def _usage(group: list[dict]) -> dict:
+    provider_calls = [call for call in group if (call.get("decision_metadata") or {}).get("decision_source") != "forced"]
+    forced_inputs = len(group) - len(provider_calls)
+    group = provider_calls
     totals = [usage["total_tokens"] for call in group if isinstance(usage := call["usage_metadata"], dict)
               and type(usage.get("total_tokens")) is int and usage["total_tokens"] >= 0]
+    costs = [cost for call in group if isinstance(usage := call["usage_metadata"], dict)
+             and type(cost := usage.get("cost")) in {int, float} and isfinite(cost) and cost >= 0]
     latencies = [call["duration_ms"] for call in group if call["duration_ms"] is not None]
     counts: dict[str, dict[str, int]] = {}
     for call in group:
@@ -88,6 +94,8 @@ def _usage(group: list[dict]) -> dict:
         "provider_total_tokens": sum(totals) if totals else None,
         "calls_with_provider_usage": len(totals), "calls_missing_provider_usage": len(group) - len(totals),
         "local_input_counts": counts,
+        **({"forced_inputs": forced_inputs} if forced_inputs else {}),
+        **({"provider_cost_usd": sum(costs), "calls_with_provider_cost": len(costs)} if costs else {}),
     }
 
 

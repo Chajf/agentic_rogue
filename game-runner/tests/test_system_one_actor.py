@@ -14,6 +14,7 @@ from game_runner.context.progress import InventorySnapshot, Progress
 from game_runner.graph.builder import build_graph
 from game_runner.graph.nodes.actor import DecisionValidationError
 from game_runner.graph.nodes.system_one import choice_menu
+from game_runner.pilot.export import _usage
 from game_runner.pilot.manifest import Manifest
 from game_runner.pilot.runner import private_rogue
 from game_runner.session import run_session
@@ -92,6 +93,9 @@ async def test_retries_choice_on_same_observation_then_dispatches_once():
     assert call["response_metadata"]["provider"] == "TypeSafe"
     assert call["decision_metadata"]["rationale_source"] == "actor_adapter"
     assert call["decision_metadata"]["question"] == requests[1]["questions"]["next_action"]
+    assert call["decision_metadata"]["option_order"] == list(requests[1]["questions"]["next_action"]["criteria"])
+    assert call["decision_metadata"]["model"] == "typesafe/jev-1.14-pinned"
+    assert call["decision_metadata"]["answer"]["probabilities"] == {"move_left": 1}
     assert call["raw_response"]["answers"]["next_action"]["probabilities"] == {"move_left": 1}
     assert repo.events[0]["model_call_id"] == 2
 
@@ -126,6 +130,22 @@ async def test_forced_enter_records_action_without_a_provider_call():
     assert budget.trial.calls == 0 and budget.trial.actions == 1
     assert repo.calls[0]["decision_metadata"]["decision_source"] == "forced"
     assert repo.calls[0]["usage_metadata"] is None
+
+
+def test_usage_excludes_forced_inputs_and_reports_provider_cost_coverage():
+    call = {
+        "usage_metadata": {"total_tokens": 200, "cost": 0.01}, "duration_ms": 100,
+        "input_token_count_method": "utf8_byte_estimate", "input_token_count": 400,
+    }
+    forced = {**call, "usage_metadata": None, "decision_metadata": {"decision_source": "forced"}}
+    usage = _usage([call, forced, {**call, "usage_metadata": None}])
+    assert usage["forced_inputs"] == 1
+    assert usage["calls"] == 2
+    assert usage["latency_ms"] == 200
+    assert usage["provider_total_tokens"] == 200
+    assert usage["calls_missing_provider_usage"] == 1
+    assert usage["provider_cost_usd"] == 0.01
+    assert usage["calls_with_provider_cost"] == 1
 
 
 async def test_provider_timeout_is_audited_and_does_not_dispatch():
