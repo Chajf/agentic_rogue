@@ -7,11 +7,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from game_runner.config import (
-    ContextVariant, GoalManagement, GoalReviewThresholds, HistoryFormat, Settings, StructuredStateProfile,
-    validate_goal_management, validate_history_format, validate_structured_state,
+    ActorType, ContextVariant, GoalManagement, GoalReviewThresholds, HistoryFormat, Settings, StructuredStateProfile,
+    validate_actor_type, validate_goal_management, validate_history_format, validate_structured_state,
 )
 from game_runner.pilot.diagnostics import FrozenDiagnostic
-from game_runner.prompts.system import PromptProfile
+from game_runner.prompts.system import PromptProfile, actor_prompt_version
 
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
 Policy = Literal["history_only", "working_memory"]
@@ -38,6 +38,7 @@ class Limits(ManifestModel):
 
 class Actor(ManifestModel):
     model_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    type: ActorType = "chat"
     temperature: Annotated[float, Field(ge=0, le=2, allow_inf_nan=False)] = 0
     reasoning_enabled: Annotated[bool, Field(strict=True)] | None = None
     output_tokens: PositiveInt = 512
@@ -101,6 +102,8 @@ class Manifest(ManifestModel):
         ids = [trial.trial_id for trial in self.trials]
         if len(set(ids)) != len(ids):
             raise ValueError("trial IDs must be unique")
+        for trial in self.trials:
+            validate_actor_type(self.actor.type, trial.prompt_profile, trial.context_policy, trial.goal_management)
         if self.schema_version == 2:
             return self._validate_decision_loop()
         if self.split == "held_out" or self.contrasts or self.timeouts is not None or any(
@@ -175,11 +178,15 @@ class Manifest(ManifestModel):
         return self
 
     def snapshot(self) -> dict:
+        exclude = {"actor": {"type"}} if "type" not in self.actor.model_fields_set else {}
         if self.schema_version == 1:
-            return self.model_dump(mode="json", exclude={
+            exclude.update({
                 "contrasts": True, "timeouts": True, "trials": {"__all__": {"condition", "diagnostic"}},
             })
-        return self.model_dump(mode="json")
+        return self.model_dump(mode="json", exclude=exclude)
+
+    def prompt_version(self, context_variant: ContextVariant, prompt_profile: PromptProfile) -> str:
+        return actor_prompt_version(context_variant, prompt_profile=prompt_profile, system_one=self.actor.type == "system_one")
 
     def settings(self, runtime: Settings, trial: Trial) -> Settings:
         actor = self.actor
@@ -203,4 +210,5 @@ class Manifest(ManifestModel):
             context_variant=trial.context_variant, prompt_profile=trial.prompt_profile,
             structured_state=trial.structured_state, history_format=trial.history_format,
             goal_management=trial.goal_management, goal_review=trial.goal_review,
+            actor_type=actor.type,
         )

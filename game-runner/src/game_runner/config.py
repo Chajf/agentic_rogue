@@ -7,12 +7,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile
+from game_runner.prompts.system import ACTOR_PROMPTS, PromptProfile, actor_prompt_version
 
 ContextVariant = Literal["baseline", "neighbors"]
 StructuredStateProfile = Literal["off", "map-v1"]
 HistoryFormat = Literal["replay", "compact"]
 GoalManagement = Literal["off", "managed-v1"]
+ActorType = Literal["chat", "system_one"]
 
 
 class GoalReviewThresholds(BaseModel):
@@ -47,6 +48,13 @@ def validate_history_format(history_format: HistoryFormat, structured_state: Str
         raise ValueError("compact history requires map-v1 structured state")
 
 
+def validate_actor_type(actor_type: ActorType, prompt: PromptProfile, policy: str, goals: GoalManagement) -> None:
+    if actor_type not in {"chat", "system_one"}:
+        raise ValueError("ACTOR_TYPE must be chat or system_one")
+    if actor_type == "system_one" and (prompt, policy, goals) != ("rules-v2", "history_only", "off"):
+        raise ValueError("System One requires rules-v2, history_only, and goals disabled")
+
+
 @dataclass(frozen=True)
 class Settings:
     rogue_api_url: str
@@ -71,6 +79,7 @@ class Settings:
     history_format: HistoryFormat = "replay"
     goal_management: GoalManagement = "off"
     goal_review: GoalReviewThresholds = field(default_factory=GoalReviewThresholds)
+    actor_type: ActorType = "chat"
 
     def __post_init__(self) -> None:
         if self.prompt_profile not in ACTOR_PROMPTS:
@@ -84,11 +93,18 @@ class Settings:
         validate_structured_state(self.structured_state, self.prompt_profile, self.context_policy, self.context_variant)
         validate_history_format(self.history_format, self.structured_state)
         validate_goal_management(self.goal_management, self.structured_state)
+        validate_actor_type(self.actor_type, self.prompt_profile, self.context_policy, self.goal_management)
         if self.summary_output_tokens <= 0 or self.summary_context_token_budget <= self.summary_output_tokens:
             raise ValueError("SUMMARY_CONTEXT_TOKEN_BUDGET must exceed positive SUMMARY_OUTPUT_TOKENS")
         if self.max_summary_attempts <= 0:
             raise ValueError("MAX_SUMMARY_ATTEMPTS must be positive")
         _ = self.actor_output_tokens
+
+    @property
+    def prompt_version(self) -> str:
+        return actor_prompt_version(
+            self.context_variant, prompt_profile=self.prompt_profile, system_one=self.actor_type == "system_one",
+        )
 
     @property
     def actor_output_tokens(self) -> int:
@@ -101,6 +117,7 @@ class Settings:
     def from_env(
         cls, *, prompt_profile: PromptProfile | None = None, structured_state: StructuredStateProfile | None = None,
         history_format: HistoryFormat | None = None, goal_management: GoalManagement | None = None,
+        actor_type: ActorType | None = None,
     ) -> "Settings":
         seed = os.getenv("GAME_SEED", "").strip()
         try:
@@ -138,6 +155,7 @@ class Settings:
             structured_state=structured_state if structured_state is not None else os.getenv("STRUCTURED_STATE", "off"),
             history_format=history_format if history_format is not None else os.getenv("HISTORY_FORMAT", "replay"),
             goal_management=goal_management if goal_management is not None else os.getenv("GOAL_MANAGEMENT", "off"),
+            actor_type=actor_type if actor_type is not None else os.getenv("ACTOR_TYPE", "chat"),
         )
         if settings.game_seed is not None and not 0 <= settings.game_seed <= 2**32 - 1:
             raise ValueError("GAME_SEED must be between 0 and 2^32 - 1")

@@ -1,5 +1,6 @@
 """Prepare, invoke, and validate the actor's decision."""
 
+from collections.abc import Callable
 import time
 
 from langchain_core.language_models import BaseChatModel
@@ -19,6 +20,25 @@ class DecisionValidationError(RuntimeError):
     pass
 
 
+async def prepare_actor_context(
+    planner: ContextPlanner, state: StepState, *, progress: Progress | None = None,
+    count_input: Callable[[list[BaseMessage]], int] | None = None,
+) -> dict:
+    observation, event_id = state["observation"], state["observation_event_id"]
+    progress = progress or state.get("progress") or Progress.initial(event_id, observation)
+    loop = state.get("goal_loop")
+    prepared = await planner.prepare(
+        state["session_id"], observation, event_id, state["observation_outcome"], progress,
+        state.get("working_state"), loop.actor_record() if loop is not None else None,
+        setup_evidence=state.get("setup_evidence"), count_input=count_input,
+    )
+    return {
+        "messages": prepared.messages, "base_messages": prepared.messages,
+        "memory_revision_id": prepared.revision_id, "progress": progress,
+        "history_window": prepared.history_window, "attempts": 0, "action": None,
+    }
+
+
 def make_actor_nodes(
     model: BaseChatModel, repository: GameRepository,
     *, context_settings: ContextSettings, max_model_calls: int, summary_model=None,
@@ -27,21 +47,7 @@ def make_actor_nodes(
     planner = ContextPlanner(model, repository, context_settings, summary_model, budget)
 
     async def context(state: StepState) -> dict:
-        observation, event_id = state["observation"], state["observation_event_id"]
-        progress = state.get("progress") or Progress.initial(event_id, observation)
-        loop = state.get("goal_loop")
-        prepared = await planner.prepare(
-            state["session_id"], observation, event_id, state["observation_outcome"], progress,
-            state.get("working_state"), loop.actor_record() if loop is not None else None,
-            setup_evidence=state.get("setup_evidence"),
-        )
-        return {
-            "messages": prepared.messages, "base_messages": prepared.messages,
-            "memory_revision_id": prepared.revision_id, "progress": progress,
-            "history_window": prepared.history_window,
-            "attempts": 0,
-            "action": None,
-        }
+        return await prepare_actor_context(planner, state)
 
     def actor_metadata(state: StepState) -> dict | None:
         loop = state.get("goal_loop")

@@ -2,6 +2,7 @@
 
 from hashlib import file_digest, sha256
 import json
+from math import isfinite
 from pathlib import Path
 import tempfile
 from uuid import UUID
@@ -70,9 +71,23 @@ def _opportunities(events: list[dict], calls: list[dict]) -> dict[str, list[dict
     return result
 
 
+def _provider_cost(call: dict) -> float | None:
+    usage = call.get("usage_metadata")
+    cost = usage.get("cost") if isinstance(usage, dict) else None
+    if cost is None:
+        metadata = call.get("response_metadata")
+        chat_usage = metadata.get("token_usage") if isinstance(metadata, dict) else None
+        cost = chat_usage.get("cost") if isinstance(chat_usage, dict) else None
+    return cost if type(cost) in {int, float} and isfinite(cost) and cost >= 0 else None
+
+
 def _usage(group: list[dict]) -> dict:
+    provider_calls = [call for call in group if (call.get("decision_metadata") or {}).get("decision_source") != "forced"]
+    forced_inputs = len(group) - len(provider_calls)
+    group = provider_calls
     totals = [usage["total_tokens"] for call in group if isinstance(usage := call["usage_metadata"], dict)
               and type(usage.get("total_tokens")) is int and usage["total_tokens"] >= 0]
+    costs = [cost for call in group if (cost := _provider_cost(call)) is not None]
     latencies = [call["duration_ms"] for call in group if call["duration_ms"] is not None]
     counts: dict[str, dict[str, int]] = {}
     for call in group:
@@ -88,6 +103,8 @@ def _usage(group: list[dict]) -> dict:
         "provider_total_tokens": sum(totals) if totals else None,
         "calls_with_provider_usage": len(totals), "calls_missing_provider_usage": len(group) - len(totals),
         "local_input_counts": counts,
+        **({"forced_inputs": forced_inputs} if forced_inputs else {}),
+        **({"provider_cost_usd": sum(costs), "calls_with_provider_cost": len(costs)} if costs else {}),
     }
 
 
@@ -218,11 +235,12 @@ def _write_snapshot(connection, series_id: UUID, directory: Path) -> None:
                 for event in measured:
                     event.pop("scripted_input_event_id")
                     event.pop("error")
+            summary = _summarize(trial, measured, source["model_call"], confirmed_changes=version == 2)
+            if version == 1:
                 for call in source["model_call"]:
                     call.pop("response_metadata")
                     if call["purpose"] != "goal_selection":
                         call.update(raw_response=None, validation_error=None)
-            summary = _summarize(trial, measured, source["model_call"], confirmed_changes=version == 2)
             results.write(_canonical({"series_id": series_id, **summary}))
             order = {"model_call": 0, "event": 1, "memory_revision": 2}
             records = [(kind, record) for kind, rows in source.items() for record in rows]

@@ -34,6 +34,7 @@ def test_export_is_reproducible_and_keeps_failed_and_unstarted_trials(isolated_d
                                            input_token_count=45, input_token_count_method="utf8_byte_estimate")
         repository.finish_model_call(call, "valid", raw_response={"http_headers": "fake-secret"},
                                      parsed_action=action, decision_rationale="Move.", duration_ms=15,
+                                     response_metadata={"token_usage": {"cost": 0.002}},
                                      usage_metadata={"total_tokens": 53})
         dispatch = repository.start_game_event(session, "action", model_call_id=call, action_request=action)
         repository.finish_game_event(dispatch, "succeeded", api_step=1,
@@ -59,6 +60,7 @@ def test_export_is_reproducible_and_keeps_failed_and_unstarted_trials(isolated_d
     ]
     usage = first["model_usage"]["decision"]
     assert (usage["provider_total_tokens"], usage["calls_missing_provider_usage"]) == (53, 1)
+    assert (usage["provider_cost_usd"], usage["calls_with_provider_cost"]) == (0.002, 1)
     serialized = [json.loads(line) for line in (left / "trajectory.jsonl").read_text().splitlines()]
     assert [record["record_type"] for record in serialized] == ["event", "model_call", "event", "model_call"]
     assert serialized[-1]["status"] == "pending"
